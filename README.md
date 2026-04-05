@@ -2,7 +2,7 @@
 
 # PhoneClaw
 
-**你的手机，你的 AI，完全在本地。**
+**你的手机，你的 AI Agent，完全在本地。**
 
 [English](README_EN.md) · [报告问题](https://github.com/kellyvv/phoneclaw/issues) · [功能建议](https://github.com/kellyvv/phoneclaw/issues)
 
@@ -10,7 +10,7 @@
 
 ---
 
-PhoneClaw 是一个运行在 iPhone 上的本地 AI 助手。它不联网、不上传数据、不依赖任何云服务——所有推理完全在设备内完成。
+PhoneClaw 是一个运行在 iPhone 上的本地 AI Agent。它不联网、不上传数据、不依赖任何云服务——所有推理完全在设备内完成。
 
 你说一句话，它可以同时帮你安排日历、存联系人、创建提醒。没有弹窗，没有授权确认，静默完成。
 
