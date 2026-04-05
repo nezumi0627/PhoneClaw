@@ -30,7 +30,7 @@ struct SkillEntry: Identifiable {
     /// 从 SkillDefinition 转换
     init(from def: SkillDefinition, registry: ToolRegistry) {
         self.id = def.id
-        self.name = def.metadata.name
+        self.name = def.metadata.displayName
         self.description = def.metadata.description
         self.icon = def.metadata.icon
         self.samplePrompt = def.metadata.examples.first?.query ?? ""

@@ -17,6 +17,28 @@ struct PromptBuilder {
         return "\n" + Array(repeating: "<|image|>", count: count).joined(separator: "\n")
     }
 
+    private static func extractSystemBlock(from prompt: String) -> String {
+        if let turnEnd = prompt.range(of: "<turn|>\n") {
+            return String(prompt[prompt.startIndex...turnEnd.upperBound])
+        }
+        return prompt
+    }
+
+    private static func injectIntoSystemBlock(
+        _ systemBlock: String,
+        extraInstructions: String
+    ) -> String {
+        let trimmedExtra = extraInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedExtra.isEmpty else { return systemBlock }
+
+        guard let turnEnd = systemBlock.range(of: "<turn|>\n", options: .backwards) else {
+            return systemBlock + "\n\n" + trimmedExtra + "\n<turn|>\n"
+        }
+
+        let head = systemBlock[..<turnEnd.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        return head + "\n\n" + trimmedExtra + "\n<turn|>\n"
+    }
+
     /// 构造完整 Prompt（包含工具定义 + 对话历史）
     static func build(
         userMessage: String,
@@ -91,90 +113,122 @@ struct PromptBuilder {
         return prompt
     }
 
-    /// 构造工具/Skill 结果后的 follow-up prompt
-    ///
-    /// E2B 内存约束：follow-up 不能拼接完整 originalPrompt（会使 prefill 过长）。
-    /// 改为构建一个独立的紧凑 prompt：保留 system context + 用户问题 + 工具结果。
-    static func buildFollowUp(
+    /// `load_skill` 之后重新推理：
+    /// 直接把已加载的 Skill 指令注入 system turn，再重新回答原问题。
+    /// 这样比“把 tool_call + skill body + retry 指令继续拼接”更稳定，也更省 prefill。
+    static func buildLoadedSkillPrompt(
         originalPrompt: String,
-        modelResponse: String,
-        skillName: String,
-        skillResult: String,
         userQuestion: String,
+        skillInstructions: String,
         currentImageCount: Int = 0,
-        isLoadSkill: Bool = false
+        forceResponse: Bool = false
     ) -> String {
-        // Extract system block from originalPrompt to keep persona/skill list,
-        // but don't carry forward the full multi-turn history.
-        let systemBlock: String
-        if let turnEnd = originalPrompt.range(of: "<turn|>\n") {
-            systemBlock = String(originalPrompt[originalPrompt.startIndex...turnEnd.upperBound])
-        } else {
-            systemBlock = originalPrompt
-        }
+        let systemBlock = extractSystemBlock(from: originalPrompt)
+        let systemInstructions = injectIntoSystemBlock(
+            systemBlock,
+            extraInstructions: """
+            对于当前这一个用户问题，你已经加载了所需的 Skill 指令。
+            不要再次调用 `load_skill`。
+            如果需要执行设备内操作，直接调用对应工具；如果不需要工具，直接回答。
 
-        var prompt = systemBlock
-
-        // Include the triggering user question
-        prompt += "<|turn>user\n\(userQuestion)\(imagePromptSuffix(count: currentImageCount))<turn|>\n"
-
-        // Include the model's first response (the tool_call)
-        var cleanedResponse = modelResponse
-        for pat in ["<turn|>", "<end_of_turn>", "<eos>"] {
-            cleanedResponse = cleanedResponse.replacingOccurrences(of: pat, with: "")
-        }
-        prompt += "<|turn>model\n\(cleanedResponse.trimmingCharacters(in: .whitespacesAndNewlines))<turn|>\n"
-
-        if isLoadSkill {
-            prompt += """
-            <|turn>user
-            Skill 指令已加载：
-            \(skillResult)
-
-            请根据以上指令，调用对应的工具来完成用户的请求："\(userQuestion)"
-            如果用户的问题并不需要这个 skill，直接回答，不要强行调用工具。
-            不要告诉用户"请使用某个能力"或"请打开某个 skill"，需要的话你自己直接调用工具。
-            你的下一条回复必须是以下两种之一：
-            1. 一个 `<tool_call>...</tool_call>`
-            2. 直接给用户的最终回答
-            不能输出空白。
-            <turn|>
-            <|turn>model
-
+            已加载的 Skill 指令：
+            \(skillInstructions)
             """
-        } else {
-            prompt += """
-            <|turn>user
-            工具 \(skillName) 执行结果：
-            \(skillResult)
+        )
 
-            请根据以上结果直接回答我的问题："\(userQuestion)"
-            如果结果已经足够，请直接给出最终答案，不要反问，不要重复工具调用。
-            只有在结果明确不足以回答时，才简短说明还缺什么信息。
-            不能输出空白；即使结果是 JSON，也要整理成一句或几句可读的最终回复。
-            <turn|>
-            <|turn>model
+        var prompt = systemInstructions
+        prompt += """
+        <|turn>user
+        用户问题：
+        \(userQuestion)\(imagePromptSuffix(count: currentImageCount))
 
-            """
-        }
+        处理这个请求时，严格按以下顺序执行：
+        1. 使用已经加载的 Skill 指令，不要再次调用 `load_skill`。
+        2. 如果需要设备内操作，直接调用对应工具。
+        3. 如果工具已经成功返回，或者已经足够回答，就只输出最终结果。
+
+        不要让用户去“打开 skill”或“使用某个能力”，需要的话你自己直接调用工具。
+        你必须避免输出任何中间思考、状态更新、字段名、JSON 模板、代码块或规划草稿。
+        \(forceResponse
+          ? "你的下一条回复必须是以下两种之一：1. 一个 `<tool_call>...</tool_call>` 2. 直接给用户的最终回答正文。禁止输出空白。"
+          : "如果需要工具就直接调用；如果已经足够回答，就直接给出最终答案正文。")
+        <turn|>
+        <|turn>model
+
+        """
         return prompt
     }
 
-    static func buildForcedSkillContinuation(
-        priorPrompt: String,
-        userQuestion: String
+    /// 工具执行完成后，重新构造一个最小回答 prompt，避免把上一轮 tool_call
+    /// 和完整历史继续累积到 follow-up 中。
+    static func buildToolAnswerPrompt(
+        originalPrompt: String,
+        toolName: String,
+        toolResultSummary: String,
+        userQuestion: String,
+        currentImageCount: Int = 0
     ) -> String {
-        priorPrompt + """
-        <turn|>
-        <|turn>user
-        继续完成刚才的任务："\(userQuestion)"
+        let systemBlock = extractSystemBlock(from: originalPrompt)
 
-        你已经加载了所需 skill。
-        不要解释，不要重复，不要让用户自己去使用 skill。
-        现在必须二选一：
-        1. 立即输出一个 `<tool_call>...</tool_call>`
-        2. 如果已经足够回答，直接输出最终答案
+        return systemBlock + """
+        <|turn>user
+        用户原始问题：
+        \(userQuestion)\(imagePromptSuffix(count: currentImageCount))
+
+        工具 \(toolName) 已执行完成。
+        可直接给用户的结果：
+        \(toolResultSummary)
+
+        请基于以上结果直接回答用户。
+        如果上面的内容已经是完整答案，你可以只做最少整理，但不要遗漏关键信息。
+        不要重复调用工具，不要反问，不要提到工具名、Skill、status、result、arguments 等字段。
+        不要输出 Markdown 代码块，也不要输出 JSON、键名、模板或中间步骤。
         不能输出空白。
+        <turn|>
+        <|turn>model
+
+        """
+    }
+
+    /// 单 Skill + 单工具时，先只让模型抽取 arguments，避免它直接续写出半截
+    /// `<tool_call>` 或字段草稿。
+    static func buildSingleToolArgumentsPrompt(
+        originalPrompt: String,
+        userQuestion: String,
+        skillInstructions: String,
+        toolName: String,
+        toolParameters: String,
+        currentImageCount: Int = 0
+    ) -> String {
+        let systemBlock = extractSystemBlock(from: originalPrompt)
+        let systemInstructions = injectIntoSystemBlock(
+            systemBlock,
+            extraInstructions: """
+            对于当前这一个用户问题，你已经加载了所需的 Skill 指令。
+            不要再次调用 `load_skill`。
+
+            已加载的 Skill 指令：
+            \(skillInstructions)
+            """
+        )
+
+        return systemInstructions + """
+        <|turn>user
+        用户问题：
+        \(userQuestion)\(imagePromptSuffix(count: currentImageCount))
+
+        你现在只负责为工具 `\(toolName)` 提取 arguments。
+        工具参数说明：
+        \(toolParameters)
+
+        严格遵守以下要求：
+        1. 不要调用工具，不要输出 `<tool_call>`。
+        2. 只输出一个 JSON object，内容就是 arguments 本身。
+        3. 不要输出 Markdown、代码块、解释、字段草稿或多余文字。
+        4. 可选字段如果没有，就直接省略。
+        5. 时间字段必须转换成 ISO 8601，例如 `2026-04-07T20:00:00`。
+        6. 如果缺少必填参数，输出：
+           {"_needs_clarification":"请补充缺少的信息"}
         <turn|>
         <|turn>model
 

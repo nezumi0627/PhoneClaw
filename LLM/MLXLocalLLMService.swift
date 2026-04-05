@@ -10,21 +10,43 @@ import UIKit
 
 // MARK: - MLX Local LLM Service
 
+public struct BundledModelOption: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let directoryName: String
+    public let displayName: String
+}
+
 /// MLX GPU inference service for Gemma 4.
 /// Forces MLX Metal GPU path — no CPU fallback.
 @Observable
 public class MLXLocalLLMService: LLMEngine {
-    static let bundledModelDirectoryName = "gemma-4-e2b-it-4bit"
-    static let bundledModelDisplayName = "Gemma 4 E2B"
+    static let availableModels: [BundledModelOption] = [
+        .init(
+            id: "gemma-4-e2b-it-4bit",
+            directoryName: "gemma-4-e2b-it-4bit",
+            displayName: "Gemma 4 E2B"
+        ),
+        .init(
+            id: "gemma-4-e4b-it-4bit",
+            directoryName: "gemma-4-e4b-it-4bit",
+            displayName: "Gemma 4 E4B"
+        )
+    ]
+    static let defaultModel = availableModels[0]
     private static let multimodalMaxOutputTokens = 4000
 
     // MARK: - State
 
     public private(set) var isLoaded = false
+    public private(set) var isLoading = false
     public private(set) var isGenerating = false
     public private(set) var stats = LLMStats()
     public var statusMessage = "等待加载模型..."
-    public var modelDisplayName: String { Self.bundledModelDisplayName }
+    public private(set) var selectedModel = defaultModel
+    public private(set) var loadedModel: BundledModelOption?
+    public var modelDisplayName: String { loadedModel?.displayName ?? selectedModel.displayName }
+    public var selectedModelID: String { selectedModel.id }
+    public var loadedModelID: String? { loadedModel?.id }
 
     // MARK: - Compatibility Settings
 
@@ -36,26 +58,46 @@ public class MLXLocalLLMService: LLMEngine {
 
     private var modelContainer: ModelContainer?
     private var cancelled = false
+    private var currentLoadTask: Task<Void, Never>?
+    private var currentGenerationTask: Task<Void, Never>?
 
     /// Local path to the model directory
-    private let modelPath: URL
+    private var modelPath: URL {
+        Self.resolveModelPath(for: selectedModel)
+    }
 
     // MARK: - Init
 
-    public init(modelPath: URL) {
-        self.modelPath = modelPath
+    public init(selectedModelID: String? = nil) {
+        if let selectedModelID,
+           let option = Self.availableModels.first(where: { $0.id == selectedModelID }) {
+            self.selectedModel = option
+        }
         self.stats.backend = "mlx-gpu"
     }
 
     /// Convenience init with default model location
     public convenience init() {
-        self.init(modelPath: Self.resolveDefaultModelPath())
+        self.init(selectedModelID: nil)
     }
 
-    private static func resolveDefaultModelPath() -> URL {
+    public func selectModel(id: String) -> Bool {
+        guard let option = Self.availableModels.first(where: { $0.id == id }),
+              option != selectedModel else {
+            return false
+        }
+
+        selectedModel = option
+        statusMessage = isLoaded
+            ? "已选择 \(option.displayName)，准备重新加载..."
+            : "已选择 \(option.displayName)，等待加载..."
+        return true
+    }
+
+    private static func resolveModelPath(for model: BundledModelOption) -> URL {
         if let resourceURL = Bundle.main.resourceURL {
             let directBundleDir = resourceURL.appendingPathComponent(
-                bundledModelDirectoryName,
+                model.directoryName,
                 isDirectory: true
             )
             if FileManager.default.fileExists(atPath: directBundleDir.path) {
@@ -64,7 +106,7 @@ public class MLXLocalLLMService: LLMEngine {
 
             let nestedBundleDir = resourceURL
                 .appendingPathComponent("Models", isDirectory: true)
-                .appendingPathComponent(bundledModelDirectoryName, isDirectory: true)
+                .appendingPathComponent(model.directoryName, isDirectory: true)
             if FileManager.default.fileExists(atPath: nestedBundleDir.path) {
                 return nestedBundleDir
             }
@@ -74,14 +116,26 @@ public class MLXLocalLLMService: LLMEngine {
             for: .documentDirectory,
             in: .userDomainMask
         ).first!
-        return documentsPath.appendingPathComponent("models/\(bundledModelDirectoryName)")
+        return documentsPath.appendingPathComponent("models/\(model.directoryName)")
     }
 
     func loadModel() {
-        Task {
+        currentLoadTask?.cancel()
+        currentLoadTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.currentLoadTask = nil }
             do {
+                if self.isLoading {
+                    return
+                }
                 try await load()
                 try await warmup()
+            } catch is CancellationError {
+                await MainActor.run {
+                    if self.statusMessage.hasPrefix("正在加载") || self.statusMessage.hasPrefix("正在初始化") {
+                        self.statusMessage = "已取消模型切换"
+                    }
+                }
             } catch {
                 statusMessage = "❌ \(error.localizedDescription)"
                 print("[MLX] Load failed: \(error)")
@@ -147,14 +201,23 @@ public class MLXLocalLLMService: LLMEngine {
     // MARK: - LLMEngine Protocol
 
     public func load() async throws {
+        if isLoading {
+            return
+        }
+        let model = selectedModel
+        let path = Self.resolveModelPath(for: model)
+        isLoading = true
+        defer {
+            isLoading = false
+        }
         statusMessage = "正在初始化模型..."
         await Gemma4Registration.register()
 
-        guard FileManager.default.fileExists(atPath: modelPath.path) else {
-            throw MLXError.modelDirectoryMissing(modelPath.path)
+        guard FileManager.default.fileExists(atPath: path.path) else {
+            throw MLXError.modelDirectoryMissing(path.path)
         }
 
-        statusMessage = "正在从磁盘加载模型..."
+        statusMessage = "正在加载 \(model.displayName)..."
         let loadStart = CFAbsoluteTimeGetCurrent()
 
         // ── Memory diagnostics (read before load) ──────────────────────────────
@@ -165,12 +228,14 @@ public class MLXLocalLLMService: LLMEngine {
         print("[MEM] MLX before — active: \(MLX.GPU.activeMemory / 1_048_576) MB, cache: \(MLX.GPU.cacheMemory / 1_048_576) MB")
 
         let container = try await VLMModelFactory.shared.loadContainer(
-            from: modelPath,
+            from: path,
             using: MLXTokenizersLoader()
         )
 
+        try Task.checkCancellation()
         self.modelContainer = container
         self.isLoaded = true
+        self.loadedModel = model
 
         // ── Memory diagnostics (read after load) ───────────────────────────────
         let (footprintAfter, _) = appMemoryFootprintMB()
@@ -181,7 +246,7 @@ public class MLXLocalLLMService: LLMEngine {
         stats.loadTimeMs = elapsed
         statusMessage = "模型已就绪 ✅ (\(Int(elapsed))ms)"
 
-        print("[MLX] Model loaded in \(Int(elapsed))ms — backend: mlx-gpu")
+        print("[MLX] Model loaded in \(Int(elapsed))ms — backend: mlx-gpu — model: \(model.displayName)")
     }
 
     /// Returns (footprint MB, jetsam limit MB) via task_info.
@@ -274,7 +339,11 @@ public class MLXLocalLLMService: LLMEngine {
         isMultimodal: Bool
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task { [weak self] in
+                guard let self else {
+                    continuation.finish(throwing: MLXError.modelNotLoaded)
+                    return
+                }
                 guard let container = modelContainer else {
                     continuation.finish(throwing: MLXError.modelNotLoaded)
                     return
@@ -366,20 +435,49 @@ public class MLXLocalLLMService: LLMEngine {
                 }
 
                 self.isGenerating = false
+                self.currentGenerationTask = nil
+            }
+
+            currentGenerationTask = task
+            continuation.onTermination = { [weak self] _ in
+                task.cancel()
+                if self?.currentGenerationTask?.isCancelled == true {
+                    self?.currentGenerationTask = nil
+                }
             }
         }
     }
 
     public func cancel() {
         cancelled = true
+        currentGenerationTask?.cancel()
+        currentLoadTask?.cancel()
+    }
+
+    public func prepareForReload() async {
+        cancel()
+
+        while isGenerating || isLoading {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        unload()
+        MLX.GPU.clearCache()
+        try? await Task.sleep(nanoseconds: 150_000_000)
     }
 
     public func unload() {
+        currentGenerationTask?.cancel()
+        currentLoadTask?.cancel()
         modelContainer = nil
         isLoaded = false
+        isLoading = false
         isGenerating = false
+        loadedModel = nil
+        cancelled = false
         stats = LLMStats()
         stats.backend = "mlx-gpu"
+        MLX.GPU.clearCache()
         statusMessage = "模型已卸载"
         print("[MLX] Model unloaded")
     }

@@ -17,7 +17,8 @@ struct SkillExample {
 
 struct SkillMetadata {
     let id: String              // 目录名 "clipboard"
-    let name: String            // "剪贴板"
+    let name: String            // 默认英文名 / 回退显示名
+    let localizedNameZh: String?
     let description: String
     let version: String
     let icon: String
@@ -25,6 +26,15 @@ struct SkillMetadata {
     let triggers: [String]
     let allowedTools: [String]
     let examples: [SkillExample]
+
+    var displayName: String {
+        if Locale.preferredLanguages.contains(where: { $0.lowercased().hasPrefix("zh") }),
+           let localizedNameZh,
+           !localizedNameZh.isEmpty {
+            return localizedNameZh
+        }
+        return name
+    }
 }
 
 struct SkillDefinition: Identifiable {
@@ -141,6 +151,7 @@ class SkillLoader {
         let metadata = SkillMetadata(
             id: skillId,
             name: frontmatter["name"] as? String ?? skillId,
+            localizedNameZh: frontmatter["name-zh"] as? String,
             description: frontmatter["description"] as? String ?? "",
             version: frontmatter["version"] as? String ?? "1.0.0",
             icon: frontmatter["icon"] as? String ?? "wrench",
@@ -224,6 +235,7 @@ class SkillLoader {
         ("clipboard", """
         ---
         name: Clipboard
+        name-zh: 剪贴板
         description: '读写系统剪贴板内容。当用户需要读取、复制或操作剪贴板时使用。'
         version: "1.0.0"
         icon: doc.on.clipboard
@@ -271,6 +283,7 @@ class SkillLoader {
         ("device", """
         ---
         name: Device
+        name-zh: 设备
         description: '使用 iOS 官方公开 API 查询当前设备名称、设备类型、系统版本、内存和处理器数量。'
         version: "1.0.0"
         icon: desktopcomputer
@@ -338,6 +351,7 @@ class SkillLoader {
         ("text", """
         ---
         name: Text
+        name-zh: 文本
         description: '文本处理工具：哈希计算、翻转等。当用户需要对文本进行处理或转换时使用。'
         version: "1.0.0"
         icon: textformat
@@ -380,6 +394,157 @@ class SkillLoader {
 
         <tool_call>
         {"name": "工具名", "arguments": {"text": "要处理的文本"}}
+        </tool_call>
+        """),
+
+        ("calendar", """
+        ---
+        name: Calendar
+        name-zh: 日历
+        description: '创建新的日历事项。当用户需要安排日程、会议、约会或写入日历时使用。'
+        version: "1.0.0"
+        icon: calendar
+        disabled: false
+
+        triggers:
+          - 日历
+          - 日程
+          - 会议
+          - 约会
+          - 安排
+
+        allowed-tools:
+          - calendar-create-event
+
+        examples:
+          - query: "帮我创建一个明天下午两点的会议"
+            scenario: "新建日历事项"
+        ---
+
+        # 日历事项创建
+
+        你负责帮助用户创建新的日历事项。
+
+        ## 可用工具
+
+        - **calendar-create-event**: 创建日历事项
+          - `title`: 必填，事项标题
+          - `start`: 必填，ISO 8601 开始时间，例如 `2026-04-07T14:00:00`
+          - `end`: 可选，ISO 8601 结束时间；不传时默认开始后一小时
+          - `location`: 可选，地点
+          - `notes`: 可选，备注
+
+        ## 执行流程
+
+        1. 只有当用户明确要新建/安排日历事项时才调用工具
+        2. 由你从用户话语中提取参数，工具层不做自然语言解析
+        3. 传给工具前，必须把时间整理成 ISO 8601 字符串
+        4. 如果缺少 `title` 或 `start`，先简短追问，不要猜测
+        5. 工具成功后，直接告诉用户已创建什么事项和时间
+
+        ## 调用格式
+
+        <tool_call>
+        {"name": "calendar-create-event", "arguments": {"title": "会议", "start": "2026-04-07T14:00:00"}}
+        </tool_call>
+        """),
+
+        ("reminders", """
+        ---
+        name: Reminders
+        name-zh: 提醒事项
+        description: '创建新的提醒事项。当用户需要记得做某事、设置待办或提醒时使用。'
+        version: "1.0.0"
+        icon: bell
+        disabled: false
+
+        triggers:
+          - 提醒
+          - 待办
+          - 记得
+          - 提示
+
+        allowed-tools:
+          - reminders-create
+
+        examples:
+          - query: "提醒我今晚八点发文件"
+            scenario: "新建提醒事项"
+        ---
+
+        # 提醒事项创建
+
+        你负责帮助用户创建新的提醒事项。
+
+        ## 可用工具
+
+        - **reminders-create**: 创建提醒事项
+          - `title`: 必填，提醒标题
+          - `due`: 可选，ISO 8601 提醒时间，例如 `2026-04-07T20:00:00`
+          - `notes`: 可选，备注
+
+        ## 执行流程
+
+        1. 只有当用户明确要设置提醒或待办时才调用工具
+        2. 由你提取标题、时间、备注
+        3. 如果有时间，必须转换成 ISO 8601 字符串
+        4. 如果缺少 `title`，先简短追问
+        5. 工具成功后，直接告诉用户提醒已创建
+
+        ## 调用格式
+
+        <tool_call>
+        {"name": "reminders-create", "arguments": {"title": "发文件", "due": "2026-04-07T20:00:00"}}
+        </tool_call>
+        """),
+
+        ("contacts", """
+        ---
+        name: Contacts
+        name-zh: 通讯录
+        description: '创建或更新联系人。当用户要存号码、保存联系方式或补充联系人信息时使用。'
+        version: "1.0.0"
+        icon: person.crop.circle
+        disabled: false
+
+        triggers:
+          - 联系人
+          - 通讯录
+          - 存号码
+          - 联系方式
+
+        allowed-tools:
+          - contacts-upsert
+
+        examples:
+          - query: "帮我存一下王总的电话 13812345678"
+            scenario: "新建或更新联系人"
+        ---
+
+        # 联系人创建与更新
+
+        你负责帮助用户创建或更新通讯录联系人。
+
+        ## 可用工具
+
+        - **contacts-upsert**: 创建或更新联系人
+          - `name`: 必填，联系人姓名
+          - `phone`: 可选，手机号；如果提供，会优先按手机号查重
+          - `company`: 可选，公司
+          - `email`: 可选，邮箱
+          - `notes`: 可选，备注
+
+        ## 执行流程
+
+        1. 只有当用户明确要保存、更新联系人信息时才调用工具
+        2. 由你提取姓名、手机号、公司、邮箱、备注
+        3. 如果缺少 `name`，先简短追问
+        4. 工具成功后，直接告诉用户联系人已创建或已更新
+
+        ## 调用格式
+
+        <tool_call>
+        {"name": "contacts-upsert", "arguments": {"name": "王总", "phone": "13812345678", "company": "字节"}}
         </tool_call>
         """),
     ]

@@ -32,5 +32,15 @@
 	<array>
 		<string>arm64</string>
 	</array>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>PhoneClaw 需要创建日历事项</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>PhoneClaw 需要访问日历以创建事项</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>PhoneClaw 需要创建提醒事项</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>PhoneClaw 需要访问提醒事项</string>
+	<key>NSContactsUsageDescription</key>
+	<string>PhoneClaw 需要存储联系人信息</string>
 </dict>
 </plist>

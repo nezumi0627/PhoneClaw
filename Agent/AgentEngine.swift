@@ -11,11 +11,15 @@ func log(_ message: String) {
 
 @Observable
 class ModelConfig {
+    static let selectedModelDefaultsKey = "PhoneClaw.selectedModelID"
+
     var maxTokens = 4000
     var topK = 64
     var topP = 0.95
     var temperature = 1.0
     var useGPU = true
+    var selectedModelID = UserDefaults.standard.string(forKey: selectedModelDefaultsKey)
+        ?? MLXLocalLLMService.defaultModel.id
     /// System prompt — 由 AgentEngine.loadSystemPrompt() 从 SYSPROMPT.md 注入，不在代码里硬编码。
     var systemPrompt = ""
 }
@@ -143,6 +147,10 @@ class AgentEngine {
         }
     }
 
+    var availableModels: [BundledModelOption] {
+        MLXLocalLLMService.availableModels
+    }
+
     init() {
         loadSkillEntries()
     }
@@ -173,7 +181,7 @@ class AgentEngine {
     private func findDisplayName(for name: String) -> String {
         if let skillId = findSkillId(for: name),
            let def = skillLoader.getDefinition(skillId) {
-            return def.metadata.name
+            return def.metadata.displayName
         }
         return name
     }
@@ -190,16 +198,626 @@ class AgentEngine {
         return try await toolRegistry.execute(name: toolName, args: args)
     }
 
+    private func autoToolCallForLoadedSkills(
+        skillIds: [String]
+    ) -> (name: String, arguments: [String: Any])? {
+        let uniqueSkillIds = Array(NSOrderedSet(array: skillIds)) as? [String] ?? skillIds
+
+        guard uniqueSkillIds.count == 1,
+              let skillId = uniqueSkillIds.first,
+              let def = skillLoader.getDefinition(skillId),
+              def.isEnabled else {
+            return nil
+        }
+
+        let uniqueToolNames = Array(NSOrderedSet(array: def.metadata.allowedTools)) as? [String]
+            ?? def.metadata.allowedTools
+        guard uniqueToolNames.count == 1,
+              let toolName = uniqueToolNames.first,
+              let tool = toolRegistry.find(name: toolName),
+              tool.parameters == "无" else {
+            return nil
+        }
+
+        return (tool.name, [:])
+    }
+
+    private func registeredTools(for skillId: String) -> [RegisteredTool] {
+        if let def = skillLoader.getDefinition(skillId) {
+            let tools = toolRegistry.toolsFor(names: def.metadata.allowedTools)
+            if !tools.isEmpty { return tools }
+        }
+
+        if let entry = skillEntries.first(where: { $0.id == skillId }) {
+            let tools = entry.tools.compactMap { toolRegistry.find(name: $0.name) }
+            if !tools.isEmpty { return tools }
+        }
+
+        return []
+    }
+
+    private func inferFallbackToolCall(
+        skillIds: [String],
+        userQuestion: String
+    ) -> (name: String, arguments: [String: Any])? {
+        let uniqueSkillIds = Array(NSOrderedSet(array: skillIds)) as? [String] ?? skillIds
+        guard uniqueSkillIds.count == 1,
+              let skillId = uniqueSkillIds.first else {
+            return nil
+        }
+
+        let tools = registeredTools(for: skillId)
+        guard !tools.isEmpty else { return nil }
+
+        if tools.count == 1, tools[0].parameters == "无" {
+            return (tools[0].name, [:])
+        }
+
+        let normalizedQuestion = userQuestion.lowercased()
+
+        func has(_ keyword: String) -> Bool {
+            normalizedQuestion.contains(keyword)
+        }
+
+        let candidateNames: [String]
+        switch skillId {
+        case "device":
+            if has("系统版本") || has("ios 版本") || has("版本号") {
+                candidateNames = ["device-system-version", "device-info"]
+            } else if has("名字") || has("名称") || has("叫什么") {
+                candidateNames = ["device-name", "device-info"]
+            } else if has("型号") || has("机型") {
+                candidateNames = ["device-model", "device-info"]
+            } else if has("内存") || has("ram") {
+                candidateNames = ["device-memory", "device-info"]
+            } else if has("处理器") || has("核心") || has("cpu") {
+                candidateNames = ["device-processor-count", "device-info"]
+            } else {
+                candidateNames = ["device-info"]
+            }
+        default:
+            candidateNames = []
+        }
+
+        for name in candidateNames {
+            if let tool = tools.first(where: { $0.name == name }), tool.parameters == "无" {
+                return (tool.name, [:])
+            }
+        }
+
+        return nil
+    }
+
+    private enum SingleToolExtractionOutcome {
+        case toolCall(name: String, arguments: [String: Any])
+        case needsClarification(String)
+        case failed
+    }
+
+    private func singleRegisteredToolForLoadedSkills(skillIds: [String]) -> RegisteredTool? {
+        let uniqueSkillIds = Array(NSOrderedSet(array: skillIds)) as? [String] ?? skillIds
+        guard uniqueSkillIds.count == 1,
+              let skillId = uniqueSkillIds.first else {
+            return nil
+        }
+
+        let tools = registeredTools(for: skillId)
+        guard tools.count == 1 else { return nil }
+        return tools.first
+    }
+
+    private func parseJSONObject(_ text: String) -> [String: Any]? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let candidates: [String] = {
+            if trimmed.hasPrefix("```json") || trimmed.hasPrefix("```") {
+                let stripped = trimmed
+                    .replacingOccurrences(of: "```json", with: "")
+                    .replacingOccurrences(of: "```", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return [stripped]
+            }
+
+            if let start = trimmed.firstIndex(of: "{"),
+               let end = trimmed.lastIndex(of: "}"),
+               start <= end {
+                return [trimmed, String(trimmed[start...end])]
+            }
+
+            return [trimmed]
+        }()
+
+        for candidate in candidates {
+            guard let data = candidate.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+            return object
+        }
+
+        return nil
+    }
+
+    private func iso8601StringForModel(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = .current
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
+
+    private func chineseNumberValue(_ token: String) -> Int? {
+        if let value = Int(token) { return value }
+
+        let digits: [Character: Int] = [
+            "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+            "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
+        ]
+
+        if token == "十" { return 10 }
+        if token.hasPrefix("十"), let last = token.last, let digit = digits[last] {
+            return 10 + digit
+        }
+        if token.hasSuffix("十"), let first = token.first, let digit = digits[first] {
+            return digit * 10
+        }
+        if token.count == 2 {
+            let chars = Array(token)
+            if let tens = digits[chars[0]], chars[1] == "十" {
+                return tens * 10
+            }
+        }
+        if token.count == 3 {
+            let chars = Array(token)
+            if let tens = digits[chars[0]], chars[1] == "十", let ones = digits[chars[2]] {
+                return tens * 10 + ones
+            }
+        }
+
+        return nil
+    }
+
+    private func parseBasicChineseDate(from text: String) -> Date? {
+        let patterns = [
+            "(今天|今日|今晚|今夜|明天|明晚|后天)(?:的)?(凌晨|早上|上午|中午|下午|晚上|傍晚)?([零〇一二两三四五六七八九十\\d]{1,3})点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?",
+            "(凌晨|早上|上午|中午|下午|晚上|傍晚)([零〇一二两三四五六七八九十\\d]{1,3})点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?"
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(text.startIndex..., in: text)
+            guard let match = regex.firstMatch(in: text, range: range) else { continue }
+
+            var dayToken: String?
+            var periodToken: String?
+            var hourToken: String?
+            var hasHalf = false
+            var minuteToken: String?
+
+            if match.numberOfRanges >= 6 {
+                if let r = Range(match.range(at: 1), in: text), !r.isEmpty {
+                    dayToken = String(text[r])
+                }
+                if let r = Range(match.range(at: 2), in: text), !r.isEmpty {
+                    periodToken = String(text[r])
+                }
+                if let r = Range(match.range(at: 3), in: text), !r.isEmpty {
+                    hourToken = String(text[r])
+                }
+                if let r = Range(match.range(at: 4), in: text), !r.isEmpty {
+                    hasHalf = true
+                }
+                if let r = Range(match.range(at: 5), in: text), !r.isEmpty {
+                    minuteToken = String(text[r])
+                }
+            }
+
+            if hourToken == nil, match.numberOfRanges >= 5 {
+                if let r = Range(match.range(at: 1), in: text), !r.isEmpty {
+                    periodToken = String(text[r])
+                }
+                if let r = Range(match.range(at: 2), in: text), !r.isEmpty {
+                    hourToken = String(text[r])
+                }
+                if let r = Range(match.range(at: 3), in: text), !r.isEmpty {
+                    hasHalf = true
+                }
+                if let r = Range(match.range(at: 4), in: text), !r.isEmpty {
+                    minuteToken = String(text[r])
+                }
+            }
+
+            guard let hourToken,
+                  var hour = chineseNumberValue(hourToken) else {
+                continue
+            }
+
+            var minute = 0
+            if hasHalf {
+                minute = 30
+            } else if let minuteToken, let parsedMinute = chineseNumberValue(minuteToken) {
+                minute = parsedMinute
+            }
+
+            if let periodToken {
+                switch periodToken {
+                case "下午", "晚上", "傍晚":
+                    if hour < 12 { hour += 12 }
+                case "中午":
+                    if hour < 11 { hour += 12 }
+                case "凌晨":
+                    if hour == 12 { hour = 0 }
+                default:
+                    break
+                }
+            }
+
+            var dayOffset = 0
+            switch dayToken {
+            case "明天", "明晚":
+                dayOffset = 1
+            case "后天":
+                dayOffset = 2
+            default:
+                dayOffset = 0
+            }
+
+            let calendar = Calendar.current
+            let baseDate = calendar.startOfDay(for: Date())
+            guard let day = calendar.date(byAdding: .day, value: dayOffset, to: baseDate),
+                  let finalDate = calendar.date(
+                    bySettingHour: hour,
+                    minute: minute,
+                    second: 0,
+                    of: day
+                  ) else {
+                continue
+            }
+            return finalDate
+        }
+
+        return nil
+    }
+
+    private func detectDateInQuestion(_ text: String) -> Date? {
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) {
+            let range = NSRange(text.startIndex..., in: text)
+            if let match = detector.firstMatch(in: text, options: [], range: range),
+               let date = match.date {
+                return date
+            }
+        }
+        return parseBasicChineseDate(from: text)
+    }
+
+    private func heuristicArgumentsForTool(
+        toolName: String,
+        userQuestion: String
+    ) -> [String: Any]? {
+        let text = userQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        switch toolName {
+        case "contacts-upsert":
+            let phone = text.firstMatch(of: /1[3-9]\d{9}/).map { String($0.0) }
+            var name: String?
+
+            let patterns = [
+                "(?:帮我)?(?:存(?:一下)?|保存|记一下)(.+?)(?:的)?(?:电话|手机号|号码|联系方式)",
+                "(?:联系人|通讯录)里(?:添加|保存)?(.+?)(?:的)?(?:电话|手机号|号码|联系方式)"
+            ]
+            for pattern in patterns {
+                guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+                let range = NSRange(text.startIndex..., in: text)
+                if let match = regex.firstMatch(in: text, range: range),
+                   let capture = Range(match.range(at: 1), in: text) {
+                    name = String(text[capture]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
+            }
+
+            if name == nil,
+               let phone,
+               let phoneRange = text.range(of: phone) {
+                let prefix = text[..<phoneRange.lowerBound]
+                let cleaned = prefix
+                    .replacingOccurrences(of: "帮我", with: "")
+                    .replacingOccurrences(of: "存一下", with: "")
+                    .replacingOccurrences(of: "保存", with: "")
+                    .replacingOccurrences(of: "联系人", with: "")
+                    .replacingOccurrences(of: "通讯录", with: "")
+                    .replacingOccurrences(of: "的电话", with: "")
+                    .replacingOccurrences(of: "电话", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleaned.isEmpty {
+                    name = cleaned
+                }
+            }
+
+            var company: String?
+            if let regex = try? NSRegularExpression(pattern: "[，,]\\s*([^，。,]+?)(?:的)?\\s*$") {
+                let range = NSRange(text.startIndex..., in: text)
+                if let match = regex.firstMatch(in: text, range: range),
+                   let capture = Range(match.range(at: 1), in: text) {
+                    let value = String(text[capture]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !value.isEmpty, value != phone {
+                        company = value
+                    }
+                }
+            }
+
+            guard let name, !name.isEmpty else { return nil }
+            var result: [String: Any] = ["name": name]
+            if let phone { result["phone"] = phone }
+            if let company, !company.isEmpty { result["company"] = company }
+            return result
+
+        case "reminders-create":
+            let due = detectDateInQuestion(text).map { iso8601StringForModel(from: $0) }
+            var title = text
+                .replacingOccurrences(of: "帮我", with: "")
+                .replacingOccurrences(of: "提醒我", with: "")
+                .replacingOccurrences(of: "提醒", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let cleanupPatterns = [
+                "(今天|今日|今晚|今夜|明天|明晚|后天)(?:的)?(凌晨|早上|上午|中午|下午|晚上|傍晚)?[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?",
+                "(凌晨|早上|上午|中午|下午|晚上|傍晚)[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?"
+            ]
+            for pattern in cleanupPatterns {
+                if let regex = try? NSRegularExpression(pattern: pattern) {
+                    title = regex.stringByReplacingMatches(
+                        in: title,
+                        range: NSRange(title.startIndex..., in: title),
+                        withTemplate: ""
+                    )
+                }
+            }
+            title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !title.isEmpty else { return nil }
+            var result: [String: Any] = ["title": title]
+            if let due { result["due"] = due }
+            return result
+
+        case "calendar-create-event":
+            let start = detectDateInQuestion(text).map { iso8601StringForModel(from: $0) }
+            var title = text
+                .replacingOccurrences(of: "帮我", with: "")
+                .replacingOccurrences(of: "安排", with: "")
+                .replacingOccurrences(of: "创建一个", with: "")
+                .replacingOccurrences(of: "创建", with: "")
+                .replacingOccurrences(of: "日历", with: "")
+                .replacingOccurrences(of: "事项", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanupPatterns = [
+                "(今天|今日|今晚|今夜|明天|明晚|后天)(?:的)?(凌晨|早上|上午|中午|下午|晚上|傍晚)?[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?",
+                "(凌晨|早上|上午|中午|下午|晚上|傍晚)[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?"
+            ]
+            for pattern in cleanupPatterns {
+                if let regex = try? NSRegularExpression(pattern: pattern) {
+                    title = regex.stringByReplacingMatches(
+                        in: title,
+                        range: NSRange(title.startIndex..., in: title),
+                        withTemplate: ""
+                    )
+                }
+            }
+            title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !title.isEmpty, let start else { return nil }
+            return ["title": title, "start": start]
+
+        default:
+            return nil
+        }
+    }
+
+    private func validateSingleToolArguments(
+        toolName: String,
+        arguments: [String: Any]
+    ) -> Bool {
+        switch toolName {
+        case "calendar-create-event":
+            return arguments["title"] is String && arguments["start"] is String
+        case "reminders-create":
+            return arguments["title"] is String
+        case "contacts-upsert":
+            return arguments["name"] is String
+        default:
+            return !arguments.isEmpty
+        }
+    }
+
+    private func extractSingleToolCallForLoadedSkill(
+        originalPrompt: String,
+        userQuestion: String,
+        skillInstructions: String,
+        skillIds: [String],
+        images: [CIImage]
+    ) async -> SingleToolExtractionOutcome {
+        guard let tool = singleRegisteredToolForLoadedSkills(skillIds: skillIds),
+              tool.parameters != "无" else {
+            return .failed
+        }
+
+        let extractionPrompt = PromptBuilder.buildSingleToolArgumentsPrompt(
+            originalPrompt: originalPrompt,
+            userQuestion: userQuestion,
+            skillInstructions: skillInstructions,
+            toolName: tool.name,
+            toolParameters: tool.parameters,
+            currentImageCount: images.count
+        )
+
+        if let raw = await streamLLM(prompt: extractionPrompt, images: images) {
+            let cleaned = cleanOutput(raw)
+            if let payload = parseJSONObject(cleaned) {
+                if let clarification = payload["_needs_clarification"] as? String,
+                   !clarification.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
+                    return .needsClarification(clarification)
+                }
+
+                if validateSingleToolArguments(toolName: tool.name, arguments: payload) {
+                    return .toolCall(name: tool.name, arguments: payload)
+                }
+            }
+        }
+
+        if let heuristic = heuristicArgumentsForTool(toolName: tool.name, userQuestion: userQuestion),
+           validateSingleToolArguments(toolName: tool.name, arguments: heuristic) {
+            return .toolCall(name: tool.name, arguments: heuristic)
+        }
+
+        return .failed
+    }
+
+    private func markSkillsDone(_ displayNames: [String]) {
+        guard !displayNames.isEmpty else { return }
+        for index in messages.indices {
+            guard messages[index].role == .system,
+                  let skillName = messages[index].skillName,
+                  displayNames.contains(skillName),
+                  messages[index].content == "identified" || messages[index].content == "loaded" else {
+                continue
+            }
+            messages[index].update(role: .system, content: "done", skillName: skillName)
+        }
+    }
+
+    private func looksLikeStructuredIntermediateOutput(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        if trimmed.hasPrefix("```json") || trimmed.hasPrefix("```") {
+            return true
+        }
+
+        if let regex = try? NSRegularExpression(
+            pattern: "\"[A-Za-z_][A-Za-z0-9_]*\"\\s*:",
+            options: []
+        ) {
+            let matchCount = regex.numberOfMatches(
+                in: trimmed,
+                range: NSRange(trimmed.startIndex..., in: trimmed)
+            )
+            if matchCount >= 2 && !trimmed.hasPrefix("{") {
+                return true
+            }
+        }
+
+        let suspiciousFragments = [
+            "tool_name\":",
+            "result_for_user_name\":",
+            "text_for_display\":",
+            "tool_operation_success\":",
+            "arguments_for_tool_no_skill\":",
+            "memory_user_power_conversion\":"
+        ]
+        if suspiciousFragments.filter({ trimmed.contains($0) }).count >= 2 {
+            return true
+        }
+
+        guard let data = trimmed.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) else {
+            return false
+        }
+
+        if let dict = json as? [String: Any] {
+            if dict["name"] != nil {
+                return false
+            }
+
+            let suspiciousKeys = [
+                "final_answer", "tool_call", "arguments", "device_call",
+                "next_action", "action", "tool"
+            ]
+            return suspiciousKeys.contains { dict[$0] != nil }
+        }
+
+        return false
+    }
+
+    private func looksLikePromptEcho(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        if trimmed.hasPrefix("user\n") || trimmed == "user" {
+            return true
+        }
+
+        let suspiciousPhrases = [
+            "根据已加载的 Skill",
+            "不要将任何关于工具、系统或该请求的描述变成 Markdown 代码或 JSON 模板",
+            "如果需要，请直接调用",
+            "package_name",
+            "text_for_user"
+        ]
+
+        let hitCount = suspiciousPhrases.reduce(into: 0) { count, phrase in
+            if trimmed.contains(phrase) { count += 1 }
+        }
+        return hitCount >= 2
+    }
+
+    private func syntheticToolCallText(
+        name: String,
+        arguments: [String: Any]
+    ) -> String {
+        let jsonData = try? JSONSerialization.data(withJSONObject: [
+            "name": name,
+            "arguments": arguments
+        ])
+        let jsonString = jsonData.flatMap { String(data: $0, encoding: .utf8) }
+            ?? "{\"name\":\"\(name)\",\"arguments\":{}}"
+        return """
+        <tool_call>
+        \(jsonString)
+        </tool_call>
+        """
+    }
+
+    private func parsedToolPayload(from toolResult: String) -> [String: Any]? {
+        guard let data = toolResult.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return payload
+    }
+
+    private func toolResultSummaryForModel(
+        toolName: String,
+        toolResult: String
+    ) -> String {
+        let trimmed = toolResult.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "工具 \(toolName) 已执行，但没有返回内容。" }
+
+        if let payload = parsedToolPayload(from: trimmed) {
+            if let success = payload["success"] as? Bool,
+               !success,
+               let error = payload["error"] as? String,
+               !error.isEmpty {
+                return "工具 \(toolName) 执行失败：\(error)"
+            }
+
+            if let result = payload["result"] as? String {
+                let summary = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !summary.isEmpty { return summary }
+            }
+        }
+
+        if let rendered = renderToolResultLocally(toolName: toolName, toolResult: trimmed) {
+            return rendered
+        }
+
+        return trimmed
+    }
+
     private func fallbackReplyForEmptyToolFollowUp(toolName: String, toolResult: String) -> String {
         let trimmed = toolResult.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let data = trimmed.data(using: .utf8),
-           let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let success = payload["success"] as? Bool,
-           !success,
-           let error = payload["error"] as? String,
-           !error.isEmpty {
-            return "工具 \(toolName) 执行失败：\(error)"
+        let summary = toolResultSummaryForModel(toolName: toolName, toolResult: trimmed)
+        if !summary.isEmpty, summary != trimmed {
+            return summary
         }
 
         if trimmed.isEmpty {
@@ -213,6 +831,147 @@ class AgentEngine {
         """
     }
 
+    private func renderToolResultLocally(
+        toolName: String,
+        toolResult: String
+    ) -> String? {
+        guard let payload = parsedToolPayload(from: toolResult),
+              let success = payload["success"] as? Bool,
+              success else {
+            return nil
+        }
+
+        func string(_ key: String) -> String? {
+            if let value = payload[key] as? String, !value.isEmpty { return value }
+            return nil
+        }
+
+        func int(_ key: String) -> Int? {
+            if let value = payload[key] as? Int { return value }
+            if let value = payload[key] as? Double { return Int(value) }
+            if let value = payload[key] as? String, let intValue = Int(value) { return intValue }
+            return nil
+        }
+
+        func double(_ key: String) -> Double? {
+            if let value = payload[key] as? Double { return value }
+            if let value = payload[key] as? Int { return Double(value) }
+            if let value = payload[key] as? String, let doubleValue = Double(value) { return doubleValue }
+            return nil
+        }
+
+        switch toolName {
+        case "device-info":
+            var lines: [String] = []
+            if let name = string("name") {
+                lines.append("设备名称：\(name)")
+            }
+            if let localizedModel = string("localized_model") ?? string("model") {
+                lines.append("设备类型：\(localizedModel)")
+            }
+            if let systemName = string("system_name"),
+               let systemVersion = string("system_version") {
+                lines.append("系统版本：\(systemName) \(systemVersion)")
+            } else if let systemVersion = string("system_version") {
+                lines.append("系统版本：\(systemVersion)")
+            }
+            if let memoryGB = double("memory_gb") {
+                lines.append(String(format: "物理内存：%.1f GB", memoryGB))
+            }
+            if let processorCount = int("processor_count") {
+                lines.append("处理器核心数：\(processorCount)")
+            }
+            return lines.isEmpty ? nil : lines.joined(separator: "\n")
+
+        case "device-name":
+            if let name = string("name") {
+                return "这台设备的名称是 \(name)。"
+            }
+
+        case "device-model":
+            if let localizedModel = string("localized_model") ?? string("model") {
+                return "这台设备的官方设备类型是 \(localizedModel)。"
+            }
+
+        case "device-system-version":
+            if let systemName = string("system_name"),
+               let systemVersion = string("system_version") {
+                return "当前系统版本是 \(systemName) \(systemVersion)。"
+            }
+
+        case "device-memory":
+            if let memoryGB = double("memory_gb") {
+                return String(format: "这台设备的物理内存约为 %.1f GB。", memoryGB)
+            }
+
+        case "device-processor-count":
+            if let processorCount = int("processor_count") {
+                return "这台设备的处理器核心数是 \(processorCount)。"
+            }
+
+        case "device-identifier-for-vendor":
+            if let identifier = string("identifier_for_vendor") {
+                return "当前 App 在这台设备上的 identifierForVendor 是 \(identifier)。"
+            }
+
+        case "clipboard-read":
+            if let content = string("content") {
+                return "剪贴板当前内容是：\(content)"
+            }
+
+        case "clipboard-write":
+            if let copiedLength = int("copied_length") {
+                return "已写入剪贴板，共 \(copiedLength) 个字符。"
+            }
+
+        case "text-reverse":
+            if let reversed = string("reversed") {
+                return "翻转结果：\(reversed)"
+            }
+
+        case "calculate-hash":
+            if let hash = payload["hash"] {
+                return "哈希值是 \(hash)。"
+            }
+
+        case "calendar-create-event":
+            if let title = string("title"),
+               let start = string("start") {
+                var parts = ["已创建日历事项“\(title)”", "开始时间是 \(start)"]
+                if let location = string("location") {
+                    parts.append("地点是 \(location)")
+                }
+                return parts.joined(separator: "，") + "。"
+            }
+
+        case "reminders-create":
+            if let title = string("title") {
+                if let due = string("due") {
+                    return "已创建提醒事项“\(title)”，提醒时间是 \(due)。"
+                }
+                return "已创建提醒事项“\(title)”。"
+            }
+
+        case "contacts-upsert":
+            if let name = string("name") {
+                let action = string("action") == "updated" ? "已更新" : "已创建"
+                var parts = ["\(action)联系人“\(name)”"]
+                if let phone = string("phone") {
+                    parts.append("手机号是 \(phone)")
+                }
+                if let company = string("company") {
+                    parts.append("公司是 \(company)")
+                }
+                return parts.joined(separator: "，") + "。"
+            }
+
+        default:
+            break
+        }
+
+        return nil
+    }
+
     private func fallbackReplyForEmptySkillFollowUp(skillName: String) -> String {
         "Skill \(skillName) 已加载，但模型没有继续生成工具调用或最终回答。请重试，或把问题说得更具体一些。"
     }
@@ -223,11 +982,10 @@ class AgentEngine {
     var defaultSystemPrompt: String { kDefaultSystemPrompt }
 
     func setup() {
+        applyModelSelection()
         loadSystemPrompt()       // 从 SYSPROMPT.md 注入 system prompt
         applySamplingConfig()
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.llm.loadModel()
-        }
+        llm.loadModel()
     }
 
     // MARK: - SYSPROMPT 注入
@@ -264,10 +1022,37 @@ class AgentEngine {
         llm.maxOutputTokens = config.maxTokens
     }
 
+    @discardableResult
+    func applyModelSelection() -> Bool {
+        UserDefaults.standard.set(
+            config.selectedModelID,
+            forKey: ModelConfig.selectedModelDefaultsKey
+        )
+        return llm.selectModel(id: config.selectedModelID)
+    }
+
     func reloadModel() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.llm.loadModel()
+        let selectedModelID = config.selectedModelID
+        Task { [weak self] in
+            guard let self else { return }
+            self.isProcessing = false
+            _ = self.llm.selectModel(id: selectedModelID)
+            await self.llm.prepareForReload()
+            self.llm.loadModel()
         }
+    }
+
+    func permissionStatuses() -> [AppPermissionKind: AppPermissionStatus] {
+        toolRegistry.allPermissionStatuses()
+    }
+
+    func requestPermission(_ kind: AppPermissionKind) async -> AppPermissionStatus {
+        do {
+            _ = try await toolRegistry.requestAccess(for: kind)
+        } catch {
+            log("[Permission] \(kind.rawValue) request failed: \(error.localizedDescription)")
+        }
+        return toolRegistry.authorizationStatus(for: kind)
     }
 
     // MARK: - 处理用户输入（MLX 流式输出）
@@ -401,6 +1186,22 @@ class AgentEngine {
 
     // MARK: - Skill 结果后的后续推理（支持多轮工具链）
 
+    private func streamLLM(prompt: String, images: [CIImage]) async -> String? {
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            llm.generateStream(prompt: prompt, images: images) { _ in
+            } onComplete: { result in
+                switch result {
+                case .success(let text):
+                    log("[Agent] LLM raw: \(text.prefix(300))")
+                    continuation.resume(returning: text)
+                case .failure(let error):
+                    log("[Agent] LLM failed: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
     private func streamLLM(prompt: String, msgIndex: Int, images: [CIImage]) async -> String? {
         var buffer = ""
         return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
@@ -479,6 +1280,7 @@ class AgentEngine {
 
             var allInstructions = ""
             var loadedDisplayNames: [String] = []
+            var loadedSkillIds: [String] = []
             for lsCall in loadSkillCalls {
                 let skillName = (lsCall.arguments["skill"] as? String)
                              ?? (lsCall.arguments["name"] as? String)
@@ -499,6 +1301,7 @@ class AgentEngine {
                 messages[cardIdx].update(role: .system, content: "loaded", skillName: displayName)
                 messages.append(ChatMessage(role: .skillResult, content: instructions, skillName: skillName))
                 allInstructions += instructions + "\n\n"
+                loadedSkillIds.append(skillName)
             }
 
             guard !allInstructions.isEmpty else {
@@ -506,14 +1309,60 @@ class AgentEngine {
                 return
             }
 
-            let followUpPrompt = PromptBuilder.buildFollowUp(
+            if let autoCall = autoToolCallForLoadedSkills(skillIds: loadedSkillIds)
+                ?? inferFallbackToolCall(skillIds: loadedSkillIds, userQuestion: userQuestion) {
+                log("[Agent] load_skill 直接执行工具: \(autoCall.name)")
+                let syntheticToolCall = syntheticToolCallText(
+                    name: autoCall.name,
+                    arguments: autoCall.arguments
+                )
+                await executeToolChain(
+                    prompt: prompt,
+                    fullText: syntheticToolCall,
+                    userQuestion: userQuestion,
+                    images: images,
+                    round: round + 1,
+                    maxRounds: maxRounds
+                )
+                return
+            }
+
+            let singleToolExtraction = await extractSingleToolCallForLoadedSkill(
                 originalPrompt: prompt,
-                modelResponse: fullText,
-                skillName: "load_skill",
-                skillResult: allInstructions,
                 userQuestion: userQuestion,
-                currentImageCount: images.count,
-                isLoadSkill: true
+                skillInstructions: allInstructions,
+                skillIds: loadedSkillIds,
+                images: images
+            )
+            switch singleToolExtraction {
+            case .toolCall(let name, let arguments):
+                log("[Agent] load_skill 参数提取后执行工具: \(name)")
+                let syntheticToolCall = syntheticToolCallText(name: name, arguments: arguments)
+                await executeToolChain(
+                    prompt: prompt,
+                    fullText: syntheticToolCall,
+                    userQuestion: userQuestion,
+                    images: images,
+                    round: round + 1,
+                    maxRounds: maxRounds
+                )
+                return
+
+            case .needsClarification(let clarification):
+                messages.append(ChatMessage(role: .assistant, content: clarification))
+                markSkillsDone(loadedDisplayNames)
+                isProcessing = false
+                return
+
+            case .failed:
+                break
+            }
+
+            let followUpPrompt = PromptBuilder.buildLoadedSkillPrompt(
+                originalPrompt: prompt,
+                userQuestion: userQuestion,
+                skillInstructions: allInstructions,
+                currentImageCount: images.count
             )
 
             messages.append(ChatMessage(role: .assistant, content: "▍"))
@@ -533,10 +1382,15 @@ class AgentEngine {
                 )
             } else {
                 let cleaned = cleanOutput(nextText)
-                if cleaned.isEmpty {
-                    let retryPrompt = PromptBuilder.buildForcedSkillContinuation(
-                        priorPrompt: followUpPrompt,
-                        userQuestion: userQuestion
+                if cleaned.isEmpty
+                    || looksLikeStructuredIntermediateOutput(cleaned)
+                    || looksLikePromptEcho(cleaned) {
+                    let retryPrompt = PromptBuilder.buildLoadedSkillPrompt(
+                        originalPrompt: prompt,
+                        userQuestion: userQuestion,
+                        skillInstructions: allInstructions,
+                        currentImageCount: images.count,
+                        forceResponse: true
                     )
 
                     guard let retryText = await streamLLM(prompt: retryPrompt, msgIndex: followUpIndex, images: images) else {
@@ -560,13 +1414,18 @@ class AgentEngine {
                         let loadedSkillName = loadedDisplayNames.joined(separator: ", ").isEmpty
                             ? "已加载的能力"
                             : loadedDisplayNames.joined(separator: ", ")
-                        messages[followUpIndex].update(content: retryCleaned.isEmpty
+                        let finalReply = retryCleaned.isEmpty
+                            || looksLikeStructuredIntermediateOutput(retryCleaned)
+                            || looksLikePromptEcho(retryCleaned)
                             ? fallbackReplyForEmptySkillFollowUp(skillName: loadedSkillName)
-                            : retryCleaned)
+                            : retryCleaned
+                        messages[followUpIndex].update(content: finalReply)
+                        markSkillsDone(loadedDisplayNames)
                         isProcessing = false
                     }
                 } else {
                     messages[followUpIndex].update(content: cleaned)
+                    markSkillsDone(loadedDisplayNames)
                     isProcessing = false
                 }
             }
@@ -608,15 +1467,15 @@ class AgentEngine {
 
         do {
             let toolResult = try await handleToolExecution(toolName: call.name, args: call.arguments)
+            let toolResultSummary = toolResultSummaryForModel(toolName: call.name, toolResult: toolResult)
             messages[cardIndex].update(role: .system, content: "done", skillName: displayName)
-            messages.append(ChatMessage(role: .skillResult, content: toolResult, skillName: call.name))
+            messages.append(ChatMessage(role: .skillResult, content: toolResultSummary, skillName: call.name))
             log("[Agent] Tool \(call.name) round \(round) done")
 
-            let followUpPrompt = PromptBuilder.buildFollowUp(
+            let followUpPrompt = PromptBuilder.buildToolAnswerPrompt(
                 originalPrompt: prompt,
-                modelResponse: fullText,
-                skillName: call.name,
-                skillResult: toolResult,
+                toolName: call.name,
+                toolResultSummary: toolResultSummary,
                 userQuestion: userQuestion,
                 currentImageCount: images.count
             )
@@ -638,7 +1497,9 @@ class AgentEngine {
                 )
             } else {
                 let cleaned = cleanOutput(nextText)
-                if cleaned.isEmpty {
+                if cleaned.isEmpty
+                    || looksLikeStructuredIntermediateOutput(cleaned)
+                    || looksLikePromptEcho(cleaned) {
                     messages[followUpIndex].update(content: fallbackReplyForEmptyToolFollowUp(
                         toolName: call.name,
                         toolResult: toolResult
@@ -758,6 +1619,10 @@ class AgentEngine {
             result = String(result.dropFirst(6))
         } else if result == "model" {
             return ""
+        } else if result.hasPrefix("user\n") {
+            result = String(result.dropFirst(5))
+        } else if result == "user" {
+            return ""
         }
 
         return String(result.drop(while: { $0.isWhitespace || $0.isNewline }))
@@ -799,6 +1664,10 @@ class AgentEngine {
         if result.hasPrefix("model\n") {
             result = String(result.dropFirst(6))
         } else if result == "model" {
+            result = ""
+        } else if result.hasPrefix("user\n") {
+            result = String(result.dropFirst(5))
+        } else if result == "user" {
             result = ""
         }
 
