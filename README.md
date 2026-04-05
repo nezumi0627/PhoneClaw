@@ -111,7 +111,16 @@ hf download mlx-community/gemma-4-e2b-it-4bit --local-dir ./Models/gemma-4-e2b-i
 
 **方案 C — 同时打包 E2B + E4B**
 
-同上，两个模型目录都下载，并把两个 folder reference 都加回 `Copy Bundle Resources`。
+下载两个模型：
+
+```bash
+brew install hf
+mkdir -p ./Models/gemma-4-e2b-it-4bit ./Models/gemma-4-e4b-it-4bit
+hf download mlx-community/gemma-4-e2b-it-4bit --local-dir ./Models/gemma-4-e2b-it-4bit
+hf download mlx-community/gemma-4-e4b-it-4bit --local-dir ./Models/gemma-4-e4b-it-4bit
+```
+
+然后把两个模型 folder reference 都加回 Xcode 的 `Copy Bundle Resources`。
 
 ### 4. 打开工程
 

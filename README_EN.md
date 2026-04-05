@@ -208,7 +208,17 @@ By default, the project no longer bundles anything from `Models/` into the app.
 
 ### Option C — Both E2B and E4B
 
-Keep both directories, then manually add both folder references back into `Copy Bundle Resources`. Users can switch in the app's model settings page.
+Download both models:
+
+```bash
+brew install hf
+mkdir -p ./Models/gemma-4-e2b-it-4bit ./Models/gemma-4-e4b-it-4bit
+hf download mlx-community/gemma-4-e2b-it-4bit --local-dir ./Models/gemma-4-e2b-it-4bit
+hf download mlx-community/gemma-4-e4b-it-4bit --local-dir ./Models/gemma-4-e4b-it-4bit
+```
+
+Then add both folder references back into Xcode's `Copy Bundle Resources`.
+
 
 ## Adding Custom Skills
 
