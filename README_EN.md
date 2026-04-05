@@ -2,7 +2,7 @@
 
 # PhoneClaw
 
-**Your phone. Your AI. Entirely on-device.**
+**Your phone. Your AI Agent. Entirely on-device.**
 
 [中文](README.md) · [Report an Issue](https://github.com/kellyvv/phoneclaw/issues) · [Request a Feature](https://github.com/kellyvv/phoneclaw/issues)
 
@@ -10,19 +10,27 @@
 
 ---
 
-PhoneClaw is a local AI assistant that runs entirely on your iPhone. No internet connection. No data uploads. No cloud dependency — all inference happens on-device.
+PhoneClaw is a local AI Agent that runs entirely on your iPhone. No internet connection. No data uploads. No cloud dependency — all inference happens on-device.
 
-Say one sentence, and it can schedule a meeting, save a contact, and set a reminder — all at once, silently, with no confirmation dialogs.
+Tell it what you need. It figures out the intent, invokes the right skill, and acts — silently, with no popups or confirmation dialogs.
 
 ## What It Can Do
 
 ### 🗓️ Calendar · Reminders · Contacts
 
-One sentence. Three things done:
+Tell PhoneClaw:
 
-> "Tomorrow at 2pm, meet with Alex from Bytedance at Hightech Park. His number is 138xxxx. Also remind me tonight at 8 to send the architecture doc."
+> "Tomorrow at 2pm, schedule a meeting at Hightech Park"
 
-PhoneClaw breaks it down and executes — a calendar event is created, a contact is saved silently, and a reminder fires at exactly 8pm.
+→ A calendar event is created with the time and location.
+
+> "Save Alex's number 138xxxx, he's from Bytedance"
+
+→ A contact is silently written to your address book with his company.
+
+> "Remind me tonight at 8 to send the architecture doc"
+
+→ A reminder fires at exactly 8pm.
 
 ### 📋 Clipboard · Device Info · Text Tools
 
