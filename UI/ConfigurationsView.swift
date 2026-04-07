@@ -3,16 +3,24 @@ import SwiftUI
 import UIKit
 #endif
 
-// MARK: - 設定画面（iOS 版、Themeに合わせたダークカラー）
-
 struct ConfigurationsView: View {
+    enum Tab: Int, CaseIterable {
+        case model, prompt, local, permission
+        var title: String {
+            switch self {
+            case .model: return "モデル設定"
+            case .prompt: return "プロンプト"
+            case .local: return "ローカル"
+            case .permission: return "権限"
+            }
+        }
+    }
+
     @Bindable var engine: AgentEngine
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
-    // 0=モデル設定, 1=システムプロンプト, 2=ローカルモデル, 3=権限
-    @State private var selectedTab = 0
 
-    // ローカル編集状態（確定後に適用）
+    @State private var selectedTab: Tab = .model
     @State private var selectedModelID = MLXLocalLLMService.defaultModel.id
     @State private var maxTokens: Double = 4000
     @State private var topK: Double = 64
@@ -22,45 +30,64 @@ struct ConfigurationsView: View {
     @State private var permissionStatuses: [AppPermissionKind: AppPermissionStatus] = [:]
     @State private var requestingPermission: AppPermissionKind?
 
-    // カスタムモデル関連
     @State private var showFilePicker = false
     @State private var customModelPaths: [String: URL] = [:]
     @State private var customModelNameInput = ""
     @State private var showCustomModelAlert = false
     @State private var pendingCustomURL: URL?
 
+    @State private var selectedPromptIDs: Set<UUID> = []
+    @State private var promptEditorTarget: PromptPreset?
+    @State private var promptEditorTitle = ""
+    @State private var promptEditorBody = ""
+    @State private var showPromptEditor = false
+
+    @State private var modelToDelete: BundledModelOption?
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // タブ切り替え
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        tabButton("モデル設定", tag: 0)
-                        tabButton("システムプロンプト", tag: 1)
-                        tabButton("ローカルモデル", tag: 2)
-                        tabButton("権限", tag: 3)
+                HStack(spacing: 8) {
+                    ForEach(Tab.allCases, id: \.rawValue) { tab in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedTab = tab
+                            }
+                        } label: {
+                            Text(tab.title)
+                                .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
+                                .foregroundStyle(selectedTab == tab ? Theme.bg : Theme.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 34)
+                                .background(
+                                    Group {
+                                        if selectedTab == tab {
+                                            RoundedRectangle(cornerRadius: 10).fill(Theme.accent)
+                                        } else {
+                                            RoundedRectangle(cornerRadius: 10).fill(Theme.bgElevated)
+                                        }
+                                    }
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal)
                 }
+                .padding(12)
 
                 Rectangle().fill(Theme.border).frame(height: 1)
 
                 Group {
-                    if selectedTab == 0 {
-                        modelConfigsTab
-                    } else if selectedTab == 1 {
-                        systemPromptTab
-                    } else if selectedTab == 2 {
-                        localModelTab
-                    } else {
-                        permissionsTab
+                    switch selectedTab {
+                    case .model: modelTab
+                    case .prompt: promptTab
+                    case .local: localModelTab
+                    case .permission: permissionsTab
                     }
                 }
 
                 Rectangle().fill(Theme.border).frame(height: 1)
 
-                // 下部ボタン
-                HStack(spacing: 20) {
+                HStack(spacing: 14) {
                     Spacer()
                     Button("キャンセル") { dismiss() }
                         .foregroundStyle(Theme.textSecondary)
@@ -77,7 +104,6 @@ struct ConfigurationsView: View {
             }
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .background(Theme.bgElevated)
         }
         .preferredColorScheme(.dark)
@@ -86,6 +112,7 @@ struct ConfigurationsView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             engine.llm.refreshModelInstallStates()
             refreshPermissionStatuses()
+            customModelPaths = MLXLocalLLMService.customModelPaths
         }
         #endif
         .fileImporter(
@@ -93,27 +120,17 @@ struct ConfigurationsView: View {
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
-            switch result {
-            case .success(let urls):
-                if let url = urls.first {
-                    pendingCustomURL = url
-                    showCustomModelAlert = true
-                }
-            case .failure:
-                break
+            if case .success(let urls) = result, let url = urls.first {
+                pendingCustomURL = url
+                showCustomModelAlert = true
             }
         }
         .alert("モデル名を入力", isPresented: $showCustomModelAlert) {
             TextField("例: my-model-4bit", text: $customModelNameInput)
             Button("追加") {
                 if let url = pendingCustomURL, !customModelNameInput.isEmpty {
-                    // セキュリティスコープ付きアクセスを開始
-                    let accessed = url.startAccessingSecurityScopedResource()
-                    Task { @MainActor in
-                        MLXLocalLLMService.registerCustomModel(name: customModelNameInput, url: url)
-                        customModelPaths = MLXLocalLLMService.customModelPaths
-                        if accessed { url.stopAccessingSecurityScopedResource() }
-                    }
+                    MLXLocalLLMService.registerCustomModel(name: customModelNameInput, url: url)
+                    customModelPaths = MLXLocalLLMService.customModelPaths
                     customModelNameInput = ""
                     pendingCustomURL = nil
                 }
@@ -122,36 +139,68 @@ struct ConfigurationsView: View {
                 customModelNameInput = ""
                 pendingCustomURL = nil
             }
+        }
+        .alert("モデルを削除しますか？", isPresented: Binding(
+            get: { modelToDelete != nil },
+            set: { if !$0 { modelToDelete = nil } }
+        )) {
+            Button("削除", role: .destructive) {
+                guard let target = modelToDelete else { return }
+                do {
+                    try engine.llm.deleteModel(target)
+                } catch {
+                    engine.llm.statusMessage = "削除に失敗: \(error.localizedDescription)"
+                }
+                modelToDelete = nil
+            }
+            Button("キャンセル", role: .cancel) { modelToDelete = nil }
         } message: {
-            Text("このフォルダに登録する名前（モデルID）を入力してください。\n例: gemma-4-e2b-it-4bit")
+            Text("ダウンロード済みのモデルファイルを削除します。")
+        }
+        .sheet(isPresented: $showPromptEditor) {
+            NavigationStack {
+                VStack(spacing: 12) {
+                    TextField("タイトル", text: $promptEditorTitle)
+                        .textFieldStyle(.roundedBorder)
+                    TextEditor(text: $promptEditorBody)
+                        .padding(10)
+                        .background(Theme.bg, in: RoundedRectangle(cornerRadius: 10))
+                    Spacer()
+                }
+                .padding()
+                .navigationTitle(promptEditorTarget == nil ? "新規プロンプト" : "プロンプト編集")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        if let target = promptEditorTarget {
+                            Button(role: .destructive) {
+                                engine.deletePromptPreset(id: target.id)
+                                showPromptEditor = false
+                            } label: { Image(systemName: "trash") }
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("適用") {
+                            if let target = promptEditorTarget {
+                                engine.updatePromptPreset(id: target.id, title: promptEditorTitle, body: promptEditorBody)
+                                engine.applyPromptPreset(target.id)
+                            } else {
+                                engine.savePromptAsPreset(title: promptEditorTitle, body: promptEditorBody)
+                            }
+                            syncPromptFromEngine()
+                            showPromptEditor = false
+                        }
+                    }
+                }
+            }
         }
     }
 
     // MARK: - タブボタン
 
-    private func tabButton(_ title: String, tag: Int) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) { selectedTab = tag }
-        } label: {
-            VStack(spacing: 8) {
-                Text(title)
-                    .font(.subheadline.weight(selectedTab == tag ? .semibold : .regular))
-                    .foregroundStyle(selectedTab == tag ? Theme.textPrimary : Theme.textTertiary)
-                    .lineLimit(1)
-
-                Rectangle()
-                    .fill(selectedTab == tag ? Theme.accent : .clear)
-                    .frame(height: 2)
-            }
-        }
-        .frame(minWidth: 80)
-    }
-
-    // MARK: - モデル設定タブ
-
-    private var modelConfigsTab: some View {
+    private var modelTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                storageSection
                 modelSection
                 configSlider(title: "最大トークン数", value: $maxTokens, range: 128...8192, displayValue: "\(Int(maxTokens))")
                 configSlider(title: "サンプリング TopK", value: $topK, range: 1...128, displayValue: "\(Int(topK))")
@@ -162,28 +211,95 @@ struct ConfigurationsView: View {
         }
     }
 
-    // MARK: - システムプロンプトタブ
+    private var promptTab: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button("新規") {
+                    promptEditorTarget = nil
+                    promptEditorTitle = ""
+                    promptEditorBody = systemPrompt
+                    showPromptEditor = true
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.accent.opacity(0.15), in: Capsule())
 
-    private var systemPromptTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextEditor(text: $systemPrompt)
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.textPrimary)
-                .scrollContentBackground(.hidden)
-                .padding(12)
-                .background(Theme.bg, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Theme.border, lineWidth: 1)
-                )
+                Button("一括削除") {
+                    engine.deletePromptPresets(ids: selectedPromptIDs)
+                    selectedPromptIDs.removeAll()
+                    syncPromptFromEngine()
+                }
+                .disabled(selectedPromptIDs.isEmpty)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.bgElevated, in: Capsule())
 
-            Button("デフォルトに戻す") {
-                systemPrompt = engine.defaultSystemPrompt
+                Spacer()
             }
-            .font(.subheadline)
-            .foregroundStyle(Theme.accent)
+            .padding(.horizontal)
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(engine.promptPresets.presets) { preset in
+                        HStack(spacing: 12) {
+                            Button {
+                                if selectedPromptIDs.contains(preset.id) {
+                                    selectedPromptIDs.remove(preset.id)
+                                } else {
+                                    selectedPromptIDs.insert(preset.id)
+                                }
+                            } label: {
+                                Image(systemName: selectedPromptIDs.contains(preset.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedPromptIDs.contains(preset.id) ? Theme.accent : Theme.textTertiary)
+                            }
+                            .buttonStyle(.plain)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(preset.title).font(.subheadline.weight(.semibold))
+                                Text(preset.body).font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(2)
+                            }
+                            Spacer()
+                            Button("適用") {
+                                engine.applyPromptPreset(preset.id)
+                                syncPromptFromEngine()
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                            Button {
+                                promptEditorTarget = preset
+                                promptEditorTitle = preset.title
+                                promptEditorBody = preset.body
+                                showPromptEditor = true
+                            } label: { Image(systemName: "square.and.pencil") }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(12)
+                        .background(Theme.bg, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+                    }
+                }
+                .padding()
+            }
         }
-        .padding()
+    }
+
+    private var storageSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("ストレージ").font(.headline)
+            if let storage = engine.llm.deviceStorageInfo() {
+                ProgressView(value: Double(storage.usedBytes), total: Double(storage.totalBytes))
+                    .tint(Theme.accent)
+                Text("使用 \(formatBytes(storage.usedBytes)) / 総容量 \(formatBytes(storage.totalBytes))（空き \(formatBytes(storage.freeBytes))）")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            } else {
+                Text("ストレージ情報を取得できません").font(.caption).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .padding(14)
+        .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     // MARK: - ローカルモデルタブ（カスタムモデルフォルダ指定）
@@ -223,6 +339,14 @@ struct ConfigurationsView: View {
                                             .font(.caption.monospaced())
                                             .foregroundStyle(Theme.textTertiary)
                                             .lineLimit(1)
+                                    }
+                                    HStack(spacing: 6) {
+                                        Text("画像対応")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(Theme.accentGreen)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(Theme.accentGreen.opacity(0.16), in: Capsule())
                                     }
                                 }
 
@@ -286,6 +410,50 @@ struct ConfigurationsView: View {
                     Text("4. モデル設定タブでそのIDのモデルを選択してOKを押す")
                         .font(.caption)
                         .foregroundStyle(Theme.textSecondary)
+                    if let url = URL(string: "https://huggingface.co/mlx-community") {
+                        Button("Hugging Face からモデルを探す") { openURL(url) }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+                .padding(14)
+                .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("ローカルAPI")
+                        .font(.headline)
+                        .foregroundStyle(Theme.textPrimary)
+
+                    Toggle("サーバーを有効化", isOn: Binding(
+                        get: { engine.localAPIServerEnabled },
+                        set: { enabled in
+                            if enabled {
+                                engine.startLocalAPIServer()
+                            } else {
+                                engine.stopLocalAPIServer()
+                            }
+                        }
+                    ))
+                    .toggleStyle(.switch)
+
+                    Text("URL: \(engine.localAPIBaseURL())")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("Token: \(engine.localAPIToken)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(Theme.textTertiary)
+                        .textSelection(.enabled)
+
+                    Button("トークン再生成") {
+                        engine.regenerateLocalAPIToken()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+
+                    Text("同一LANのみで利用し、Authorization: Bearer <token> ヘッダを必須にしてください。")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textTertiary)
                 }
                 .padding(14)
                 .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
@@ -313,6 +481,9 @@ struct ConfigurationsView: View {
             Text("モデル")
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
+            Text("推奨: \(engine.llm.recommendedModelID() == selectedModelID ? "このモデル" : engine.llm.recommendedModelID())")
+                .font(.caption)
+                .foregroundStyle(Theme.textTertiary)
 
             Text(engine.llm.isLoaded
                  ? "読み込み済み：" + engine.llm.modelDisplayName
@@ -323,6 +494,7 @@ struct ConfigurationsView: View {
             VStack(spacing: 10) {
                 ForEach(engine.availableModels) { model in
                     let state = engine.llm.installState(for: model)
+                    let health = engine.llm.modelHealth(for: model)
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
@@ -338,15 +510,41 @@ struct ConfigurationsView: View {
 
                             VStack(alignment: .trailing, spacing: 8) {
                                 modelStateControl(for: model, state: state)
-
-                                if selectedModelID == model.id {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(Theme.accent)
-                                } else {
-                                    Image(systemName: "circle")
-                                        .foregroundStyle(Theme.textTertiary)
-                                }
+                                Toggle("", isOn: Binding(
+                                    get: { selectedModelID == model.id },
+                                    set: { if $0 { selectedModelID = model.id } }
+                                ))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
                             }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("容量: \(formatBytes(engine.llm.modelDirectorySizeBytes(model)))")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                            Text("推定 \(String(format: "%.2f", model.estimatedSizeGB))GB")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.textTertiary)
+                            if model.supportsImage {
+                                Text("画像対応")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(Theme.accentGreen)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Theme.accentGreen.opacity(0.14), in: Capsule())
+                            }
+                        }
+
+                        switch health {
+                        case .healthy:
+                            Text("状態: 正常")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.accentGreen)
+                        case .missingFiles(let files):
+                            Text("不足ファイル: \(files.joined(separator: ", "))")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.accent)
                         }
 
                         if let detail = modelStateDetail(state) {
@@ -369,6 +567,39 @@ struct ConfigurationsView: View {
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 12))
                     .onTapGesture { selectedModelID = model.id }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button("Inject") {
+                    _ = engine.llm.injectModel(id: selectedModelID)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.accent.opacity(0.15), in: Capsule())
+
+                Button("Reject") { engine.llm.rejectCurrentModel() }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Theme.bg, in: Capsule())
+
+                Spacer()
+
+                if let target = engine.availableModels.first(where: { $0.id == selectedModelID }) {
+                    Button("削除") { modelToDelete = target }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+
+                if let target = engine.availableModels.first(where: { $0.id == selectedModelID }),
+                   let hf = MLXLocalLLMService.huggingFaceURL(for: target) {
+                    Button("HF") { openURL(hf) }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
                 }
             }
 
@@ -614,10 +845,9 @@ struct ConfigurationsView: View {
         topP = engine.config.topP
         temperature = engine.config.temperature
         systemPrompt = engine.config.systemPrompt
+        syncPromptFromEngine()
         refreshPermissionStatuses()
-        Task { @MainActor in
-            customModelPaths = MLXLocalLLMService.customModelPaths
-        }
+        customModelPaths = MLXLocalLLMService.customModelPaths
     }
 
     private func applySettings() -> Bool {
@@ -628,6 +858,9 @@ struct ConfigurationsView: View {
         engine.config.topP = topP
         engine.config.temperature = temperature
         engine.config.systemPrompt = systemPrompt
+        if let selectedPreset = engine.promptPresets.selectedPresetID {
+            engine.updatePromptPreset(id: selectedPreset, title: engine.promptPresets.selectedPreset?.title ?? "現在のプロンプト", body: systemPrompt)
+        }
 
         // サンプリングパラメータを LLM に同期（次の生成から即反映）
         engine.applySamplingConfig()
@@ -668,6 +901,17 @@ struct ConfigurationsView: View {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         openURL(url)
         #endif
+    }
+
+    private func syncPromptFromEngine() {
+        engine.syncSystemPromptFromSelectedPreset()
+        systemPrompt = engine.config.systemPrompt
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 }
 

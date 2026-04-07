@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showConfigurations = false
     @State private var showSkillsManager = false
+    @State private var thinkingPulse = false
     /// 各スキルカードの展開状態（key = SkillCard.id）
     @State private var expandedSkills: Set<UUID> = []
     /// 各THINKカードの展開状態（key = ResponseBlock.id）
@@ -109,6 +110,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showSkillsManager) {
             SkillsManagerView(engine: engine)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                thinkingPulse = true
+            }
         }
     }
 
@@ -218,19 +224,31 @@ struct ContentView: View {
             // 右：Skills + 設定
             HStack(spacing: 6) {
                 Button(action: toggleThinkingMode) {
-                    HStack(spacing: 6) {
-                        Image(systemName: engine.config.enableThinking ? "sparkles" : "sparkles")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(localizedThinkingText("思考", "Think"))
+                    HStack(spacing: 7) {
+                        Image(systemName: "brain.head.profile")
+                            .font(.system(size: 12, weight: .semibold))
+                            .scaleEffect(engine.config.enableThinking && thinkingPulse ? 1.08 : 1.0)
+                        Text(engine.config.enableThinking ? localizedThinkingText("思考 ON", "Thinking ON") : localizedThinkingText("思考 OFF", "Thinking OFF"))
                             .font(.system(size: 11, weight: .semibold, design: .rounded))
                     }
                     .foregroundStyle(engine.config.enableThinking ? Theme.bg : Theme.textSecondary)
                     .padding(.horizontal, 10)
                     .frame(height: 34)
                     .background(
-                        engine.config.enableThinking ? Theme.accent : Theme.bgElevated,
+                        LinearGradient(
+                            colors: engine.config.enableThinking
+                                ? [Theme.accent, Theme.accent.opacity(0.78)]
+                                : [Theme.bgElevated, Theme.bgElevated],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
                         in: RoundedRectangle(cornerRadius: 9)
                     )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .strokeBorder(engine.config.enableThinking ? Theme.accent.opacity(0.4) : Theme.border, lineWidth: 1)
+                    )
+                    .shadow(color: engine.config.enableThinking ? Theme.accent.opacity(0.32) : .clear, radius: engine.config.enableThinking && thinkingPulse ? 12 : 4)
                 }
                 .buttonStyle(.plain)
 

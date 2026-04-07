@@ -1,10 +1,90 @@
 import CoreImage
 import Foundation
 import MLXLMCommon
+import Network
 import UIKit
 
 func log(_ message: String) {
     print(message)
+}
+
+final class LocalAPIServer {
+    private var listener: NWListener?
+    private var token: String = ""
+    private let queue = DispatchQueue(label: "phoneclaw.local-api")
+    var onRequest: ((String, String, [String: Any]) async -> (Int, [String: Any]))?
+
+    func start(port: UInt16, token: String) throws {
+        self.token = token
+        let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.handle(connection: connection)
+        }
+        listener.start(queue: queue)
+        self.listener = listener
+    }
+
+    func stop() {
+        listener?.cancel()
+        listener = nil
+    }
+
+    private func handle(connection: NWConnection) {
+        connection.start(queue: queue)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1_000_000) { [weak self] data, _, _, _ in
+            guard let self, let data, let raw = String(data: data, encoding: .utf8) else {
+                connection.cancel()
+                return
+            }
+            let (method, path, headers, body) = self.parse(raw)
+            guard headers["authorization"] == "Bearer \(self.token)" else {
+                self.reply(connection: connection, status: 401, body: ["error": "unauthorized"])
+                return
+            }
+
+            let bodyJSON = (try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]) ?? [:]
+            Task {
+                let result = await self.onRequest?(method, path, bodyJSON) ?? (404, ["error": "not found"])
+                self.reply(connection: connection, status: result.0, body: result.1)
+            }
+        }
+    }
+
+    private func parse(_ raw: String) -> (String, String, [String: String], String) {
+        let sections = raw.components(separatedBy: "\r\n\r\n")
+        let head = sections.first ?? ""
+        let body = sections.dropFirst().joined(separator: "\r\n\r\n")
+        let lines = head.components(separatedBy: "\r\n")
+        let requestLine = lines.first ?? "GET / HTTP/1.1"
+        let parts = requestLine.split(separator: " ")
+        let method = parts.count > 0 ? String(parts[0]) : "GET"
+        let path = parts.count > 1 ? String(parts[1]) : "/"
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            let split = line.split(separator: ":", maxSplits: 1).map(String.init)
+            if split.count == 2 {
+                headers[split[0].lowercased()] = split[1].trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return (method, path, headers, body)
+    }
+
+    private func reply(connection: NWConnection, status: Int, body: [String: Any]) {
+        let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
+        let statusText = status == 200 ? "OK" : (status == 401 ? "Unauthorized" : "Error")
+        let response = """
+        HTTP/1.1 \(status) \(statusText)\r
+        Content-Type: application/json\r
+        Content-Length: \(data.count)\r
+        Connection: close\r
+        \r
+        """
+        var packet = Data(response.utf8)
+        packet.append(data)
+        connection.send(content: packet, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
 }
 
 private extension UserInput.Audio {
@@ -37,6 +117,111 @@ class ModelConfig {
         ?? MLXLocalLLMService.defaultModel.id
     /// システムプロンプト — AgentEngine.loadSystemPrompt() が SYSPROMPT.md から注入する。コードにハードコーディングしない。
     var systemPrompt = ""
+}
+
+public struct PromptPreset: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var title: String
+    public var body: String
+    public var updatedAt: Date
+    public var isDefault: Bool
+
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        body: String,
+        updatedAt: Date = Date(),
+        isDefault: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.body = body
+        self.updatedAt = updatedAt
+        self.isDefault = isDefault
+    }
+}
+
+@Observable
+final class PromptPresetStore {
+    private let presetsKey = "PhoneClaw.promptPresets"
+    private let selectedKey = "PhoneClaw.selectedPromptPresetID"
+
+    private(set) var presets: [PromptPreset] = []
+    var selectedPresetID: UUID?
+
+    init(defaultPrompt: String) {
+        load(defaultPrompt: defaultPrompt)
+    }
+
+    var selectedPreset: PromptPreset? {
+        guard let selectedPresetID else { return nil }
+        return presets.first(where: { $0.id == selectedPresetID })
+    }
+
+    func load(defaultPrompt: String) {
+        if
+            let data = UserDefaults.standard.data(forKey: presetsKey),
+            let decoded = try? JSONDecoder().decode([PromptPreset].self, from: data),
+            !decoded.isEmpty
+        {
+            presets = decoded.sorted { $0.updatedAt > $1.updatedAt }
+        } else {
+            presets = [PromptPreset(title: "デフォルト", body: defaultPrompt, isDefault: true)]
+        }
+        if
+            let raw = UserDefaults.standard.string(forKey: selectedKey),
+            let uuid = UUID(uuidString: raw),
+            presets.contains(where: { $0.id == uuid })
+        {
+            selectedPresetID = uuid
+        } else {
+            selectedPresetID = presets.first?.id
+        }
+        persist()
+    }
+
+    func addPreset(title: String, body: String) {
+        presets.insert(.init(title: title, body: body), at: 0)
+        selectedPresetID = presets.first?.id
+        persist()
+    }
+
+    func updatePreset(id: UUID, title: String, body: String) {
+        guard let idx = presets.firstIndex(where: { $0.id == id }) else { return }
+        presets[idx].title = title
+        presets[idx].body = body
+        presets[idx].updatedAt = Date()
+        presets.sort { $0.updatedAt > $1.updatedAt }
+        persist()
+    }
+
+    func deletePreset(id: UUID) {
+        deletePresets(ids: [id])
+    }
+
+    func deletePresets(ids: Set<UUID>) {
+        presets.removeAll { ids.contains($0.id) }
+        if presets.isEmpty {
+            presets = [PromptPreset(title: "デフォルト", body: "", isDefault: true)]
+        }
+        if !presets.contains(where: { $0.id == selectedPresetID }) {
+            selectedPresetID = presets.first?.id
+        }
+        persist()
+    }
+
+    func selectPreset(id: UUID) {
+        guard presets.contains(where: { $0.id == id }) else { return }
+        selectedPresetID = id
+        persist()
+    }
+
+    private func persist() {
+        if let data = try? JSONEncoder().encode(presets) {
+            UserDefaults.standard.set(data, forKey: presetsKey)
+        }
+        UserDefaults.standard.set(selectedPresetID?.uuidString, forKey: selectedKey)
+    }
 }
 
 // MARK: - SYSPROMPT デフォルト内容（ファイルが存在しない場合のみディスクに書き込む）
@@ -278,10 +463,15 @@ class AgentEngine {
     var messages: [ChatMessage] = []
     var isProcessing = false
     var config = ModelConfig()
+    let promptPresets = PromptPresetStore(defaultPrompt: kDefaultSystemPrompt)
+    var localAPIServerEnabled = false
+    var localAPIPort: UInt16 = 8080
+    var localAPIToken = UserDefaults.standard.string(forKey: "PhoneClaw.localAPIToken") ?? UUID().uuidString.replacingOccurrences(of: "-", with: "")
 
     // ファイル駆動スキルシステム
     let skillLoader = SkillLoader()
     let toolRegistry = ToolRegistry.shared
+    private let localAPIServer = LocalAPIServer()
 
     // スキルエントリー（UI管理用、有効/無効切り替え可能）
     var skillEntries: [SkillEntry] = []
@@ -303,6 +493,11 @@ class AgentEngine {
 
     init() {
         loadSkillEntries()
+        syncSystemPromptFromSelectedPreset()
+        localAPIServer.onRequest = { [weak self] method, path, body in
+            await self?.handleLocalAPI(method: method, path: path, body: body) ?? (500, ["error": "engine missing"])
+        }
+        UserDefaults.standard.set(localAPIToken, forKey: "PhoneClaw.localAPIToken")
     }
 
     private func loadSkillEntries() {
@@ -1523,12 +1718,45 @@ class AgentEngine {
            let content = try? String(contentsOf: file, encoding: .utf8),
            !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             config.systemPrompt = content
+            promptPresets.load(defaultPrompt: content)
             print("[Agent] SYSPROMPT 読み込み完了 (\(content.count) 文字)")
         } else {
             try? kDefaultSystemPrompt.write(to: file, atomically: true, encoding: .utf8)
             config.systemPrompt = kDefaultSystemPrompt
+            promptPresets.load(defaultPrompt: kDefaultSystemPrompt)
             print("[Agent] SYSPROMPT が見つかりません — デフォルトを書き込みました: \(file.path)")
         }
+    }
+
+    func syncSystemPromptFromSelectedPreset() {
+        if let preset = promptPresets.selectedPreset {
+            config.systemPrompt = preset.body
+        }
+    }
+
+    func applyPromptPreset(_ presetID: UUID) {
+        promptPresets.selectPreset(id: presetID)
+        syncSystemPromptFromSelectedPreset()
+    }
+
+    func savePromptAsPreset(title: String, body: String) {
+        promptPresets.addPreset(title: title, body: body)
+        syncSystemPromptFromSelectedPreset()
+    }
+
+    func updatePromptPreset(id: UUID, title: String, body: String) {
+        promptPresets.updatePreset(id: id, title: title, body: body)
+        syncSystemPromptFromSelectedPreset()
+    }
+
+    func deletePromptPreset(id: UUID) {
+        promptPresets.deletePreset(id: id)
+        syncSystemPromptFromSelectedPreset()
+    }
+
+    func deletePromptPresets(ids: Set<UUID>) {
+        promptPresets.deletePresets(ids: ids)
+        syncSystemPromptFromSelectedPreset()
     }
 
     func applySamplingConfig() {
@@ -1573,6 +1801,93 @@ class AgentEngine {
             log("[権限] \(kind.rawValue) のリクエストに失敗: \(error.localizedDescription)")
         }
         return toolRegistry.authorizationStatus(for: kind)
+    }
+
+    func localAPIBaseURL() -> String {
+        "http://0.0.0.0:\(localAPIPort)"
+    }
+
+    func regenerateLocalAPIToken() {
+        localAPIToken = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        UserDefaults.standard.set(localAPIToken, forKey: "PhoneClaw.localAPIToken")
+        if localAPIServerEnabled {
+            stopLocalAPIServer()
+            startLocalAPIServer()
+        }
+    }
+
+    func startLocalAPIServer() {
+        do {
+            try localAPIServer.start(port: localAPIPort, token: localAPIToken)
+            localAPIServerEnabled = true
+        } catch {
+            localAPIServerEnabled = false
+            log("[LocalAPI] start failed: \(error)")
+        }
+    }
+
+    func stopLocalAPIServer() {
+        localAPIServer.stop()
+        localAPIServerEnabled = false
+    }
+
+    private func handleLocalAPI(method: String, path: String, body: [String: Any]) async -> (Int, [String: Any]) {
+        switch (method, path) {
+        case ("GET", "/health"):
+            return (200, ["ok": true, "model_loaded": llm.isLoaded, "model": llm.modelDisplayName])
+        case ("GET", "/models"):
+            let models = availableModels.map { model in
+                [
+                    "id": model.id,
+                    "name": model.displayName,
+                    "supports_image": model.supportsImage,
+                    "estimated_size_gb": model.estimatedSizeGB,
+                    "size_bytes": llm.modelDirectorySizeBytes(model),
+                    "state": "\(llm.installState(for: model))",
+                    "selected": config.selectedModelID == model.id,
+                ] as [String: Any]
+            }
+            return (200, ["models": models])
+        case ("POST", "/models/select"):
+            guard let id = body["id"] as? String else {
+                return (400, ["error": "id required"])
+            }
+            config.selectedModelID = id
+            _ = llm.injectModel(id: id)
+            return (200, ["ok": true, "selected_model": id])
+        case ("POST", "/models/reject"):
+            llm.rejectCurrentModel()
+            return (200, ["ok": true])
+        case ("GET", "/stats"):
+            return (200, [
+                "ttft_ms": llm.stats.ttftMs,
+                "tokens_per_sec": llm.stats.tokensPerSec,
+                "peak_memory_mb": llm.stats.peakMemoryMB,
+                "total_tokens": llm.stats.totalTokens,
+            ])
+        case ("POST", "/chat/completions"):
+            guard let prompt = body["prompt"] as? String else {
+                return (400, ["error": "prompt required"])
+            }
+            let response = await apiCompletion(prompt: prompt)
+            return (200, ["text": response])
+        default:
+            return (404, ["error": "not_found"])
+        }
+    }
+
+    private func apiCompletion(prompt: String) async -> String {
+        await withCheckedContinuation { continuation in
+            llm.generateStream(prompt: prompt, images: [], audios: []) { _ in
+            } onComplete: { result in
+                switch result {
+                case .success(let text):
+                    continuation.resume(returning: self.cleanOutput(text))
+                case .failure(let error):
+                    continuation.resume(returning: "error: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     // MARK: - ユーザー入力処理（MLXストリーム出力）

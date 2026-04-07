@@ -16,6 +16,8 @@ public struct BundledModelOption: Identifiable, Hashable, Sendable {
     public let displayName: String
     public let repositoryID: String
     public let requiredFiles: [String]
+    public let estimatedSizeGB: Double
+    public let supportsImage: Bool
 }
 
 public enum ModelInstallState: Equatable, Sendable {
@@ -25,6 +27,17 @@ public enum ModelInstallState: Equatable, Sendable {
     case downloaded
     case bundled
     case failed(String)
+}
+
+public enum ModelHealthState: Equatable, Sendable {
+    case healthy
+    case missingFiles([String])
+}
+
+public struct DeviceStorageInfo: Sendable {
+    public let totalBytes: Int64
+    public let freeBytes: Int64
+    public let usedBytes: Int64
 }
 
 /// MLX GPU inference service for Gemma 4.
@@ -63,12 +76,18 @@ public class MLXLocalLLMService: LLMEngine {
         paths.removeValue(forKey: name)
         customModelPaths = paths
     }
+
+    public static func huggingFaceURL(for model: BundledModelOption) -> URL? {
+        URL(string: "https://huggingface.co/\(model.repositoryID)")
+    }
     static let availableModels: [BundledModelOption] = [
         .init(
             id: "gemma-4-e2b-it-4bit",
             directoryName: "gemma-4-e2b-it-4bit",
             displayName: "Gemma 4 E2B",
             repositoryID: "mlx-community/gemma-4-e2b-it-4bit",
+            estimatedSizeGB: 3.58,
+            supportsImage: true,
             requiredFiles: [
                 "config.json",
                 "generation_config.json",
@@ -85,6 +104,8 @@ public class MLXLocalLLMService: LLMEngine {
             directoryName: "gemma-4-e4b-it-4bit",
             displayName: "Gemma 4 E4B",
             repositoryID: "mlx-community/gemma-4-e4b-it-4bit",
+            estimatedSizeGB: 5.22,
+            supportsImage: true,
             requiredFiles: [
                 "config.json",
                 "generation_config.json",
@@ -256,6 +277,27 @@ public class MLXLocalLLMService: LLMEngine {
         }
     }
 
+    private static func directorySize(at root: URL) -> Int64 {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard
+                let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                values.isRegularFile == true,
+                let fileSize = values.fileSize
+            else { continue }
+            total += Int64(fileSize)
+        }
+        return total
+    }
+
     public func isModelAvailable(_ model: BundledModelOption) -> Bool {
         Self.bundledModelPath(for: model) != nil
             || Self.hasRequiredFiles(for: model, at: Self.downloadedModelPath(for: model))
@@ -269,6 +311,60 @@ public class MLXLocalLLMService: LLMEngine {
             return .downloaded
         }
         return modelInstallStates[model.id] ?? .notInstalled
+    }
+
+    public func modelHealth(for model: BundledModelOption) -> ModelHealthState {
+        let path = Self.resolveModelPath(for: model)
+        let missing = model.requiredFiles.filter { file in
+            !FileManager.default.fileExists(atPath: path.appendingPathComponent(file).path)
+        }
+        return missing.isEmpty ? .healthy : .missingFiles(missing)
+    }
+
+    public func modelDirectorySizeBytes(_ model: BundledModelOption) -> Int64 {
+        Self.directorySize(at: Self.resolveModelPath(for: model))
+    }
+
+    public func deleteModel(_ model: BundledModelOption) throws {
+        guard Self.bundledModelPath(for: model) == nil else {
+            throw MLXError.bundledModelRemovalNotAllowed(model.displayName)
+        }
+        let path = Self.downloadedModelPath(for: model)
+        if FileManager.default.fileExists(atPath: path.path) {
+            try FileManager.default.removeItem(at: path)
+        }
+        refreshModelInstallStates()
+    }
+
+    @discardableResult
+    public func injectModel(id: String) -> Bool {
+        guard selectModel(id: id) else { return false }
+        loadModel()
+        return true
+    }
+
+    public func rejectCurrentModel() {
+        unload()
+    }
+
+    public func deviceStorageInfo() -> DeviceStorageInfo? {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        guard let values = try? documents.resourceValues(forKeys: [
+            .volumeTotalCapacityKey,
+            .volumeAvailableCapacityForImportantUsageKey,
+        ]) else {
+            return nil
+        }
+        let total = Int64(values.volumeTotalCapacity ?? 0)
+        let free = Int64(values.volumeAvailableCapacityForImportantUsage ?? 0)
+        guard total > 0 else { return nil }
+        return DeviceStorageInfo(totalBytes: total, freeBytes: free, usedBytes: max(total - free, 0))
+    }
+
+    public func recommendedModelID() -> String {
+        availableHeadroomMB >= 1400 ? Self.e4bModelID : Self.e2bModelID
     }
 
     public func refreshModelInstallStates() {
@@ -1282,6 +1378,7 @@ enum MLXError: LocalizedError {
     case modelDirectoryMissing(String)
     case gpuExecutionRequiresForeground
     case multimodalMemoryRisk(model: String, headroomMB: Int, recommendation: String)
+    case bundledModelRemovalNotAllowed(String)
 
     var errorDescription: String? {
         switch self {
@@ -1293,6 +1390,8 @@ enum MLXError: LocalizedError {
             return "アプリがバックグラウンドに移行すると、GPU推論タスクを継続できません。"
         case .multimodalMemoryRisk(let model, let headroomMB, let recommendation):
             return "\(model) の剩りメモリは約 \(headroomMB) MBです。畫像/音声を処理続けるとシステムに強制終了される可能性があります。\(recommendation)"
+        case .bundledModelRemovalNotAllowed(let modelName):
+            return "同梱モデル「\(modelName)」は削除できません。"
         }
     }
 }
