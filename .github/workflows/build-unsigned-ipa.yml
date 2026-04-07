@@ -3,8 +3,6 @@ name: Build Unsigned IPA
 on:
   push:
     branches: [main]
-    paths:
-      - 'Info.plist'           # バージョン変更時のみビルド実行
   workflow_dispatch:           # 手動実行も可能
 
 jobs:
@@ -26,7 +24,6 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Fetch upstream MLXLLM model sources
         run: |
-          # InferenceKit の Package.swift から上流リポジトリの URL を取得
           UPSTREAM_REPO="https://github.com/ml-explore/mlx-swift-lm.git"
           INFERENCE_KIT_DIR="Packages/InferenceKit"
           MLXLLM_DIR="$INFERENCE_KIT_DIR/Libraries/MLXLLM"
@@ -41,7 +38,6 @@ jobs:
           cd /tmp/mlx-swift-lm
           git sparse-checkout set Sources/MLXLLM Libraries/MLXLLM
 
-          # 上流が Sources/ か Libraries/ どちらの構成かを自動判定してコピー
           if [ -d "Sources/MLXLLM" ]; then
             SRC_DIR="Sources/MLXLLM"
           elif [ -d "Libraries/MLXLLM" ]; then
@@ -54,8 +50,7 @@ jobs:
           cd $GITHUB_WORKSPACE
           echo "📁 Copying model sources from upstream $SRC_DIR → $MLXLLM_DIR ..."
 
-          # 既存の LLMModel.swift / LLMModelFactory.swift / Lora+*.swift は
-          # このリポジトリのカスタム版を優先するため上書きしない
+          # 既存のカスタムファイルは上書きしない
           PRESERVE="LLMModel.swift LLMModelFactory.swift Lora+Data.swift LoraTrain.swift"
 
           for f in /tmp/mlx-swift-lm/$SRC_DIR/*.swift; do
@@ -139,7 +134,7 @@ jobs:
           name: PhoneClaw v${{ steps.version.outputs.version }} (Build ${{ steps.version.outputs.build }})
           artifacts: ${{ runner.temp }}/PhoneClaw.ipa
           artifactContentType: application/octet-stream
-          draft: true          # 確認後に手動で公開
+          draft: true
           generateReleaseNotes: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
