@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: macos-15          # Xcode 16 / iOS 18 SDK が必要
-    env:
-      DERIVED_DATA_PATH: ${{ runner.temp }}/DerivedData
 
     steps:
       # ─────────────────────────────────────────────
@@ -34,7 +32,7 @@ jobs:
       - name: Cache Xcode DerivedData
         uses: actions/cache@v4
         with:
-          path: ${{ env.DERIVED_DATA_PATH }}
+          path: DerivedData
           key: deriveddata-${{ runner.os }}-${{ hashFiles('PhoneClaw.xcodeproj/project.pbxproj') }}
           restore-keys: |
             deriveddata-${{ runner.os }}-
@@ -128,7 +126,7 @@ jobs:
             -scheme PhoneClaw \
             -configuration Release \
             -archivePath $RUNNER_TEMP/PhoneClaw.xcarchive \
-            -derivedDataPath "$DERIVED_DATA_PATH" \
+            -derivedDataPath DerivedData \
             -destination "generic/platform=iOS" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
