@@ -25,15 +25,23 @@ jobs:
           path: |
             Pods
             ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+            ~/.gem
           key: pods-${{ runner.os }}-${{ hashFiles('Podfile.lock') }}
           restore-keys: |
             pods-${{ runner.os }}-
+
+      - name: Cache MLXLLM upstream snapshot
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/mlx-swift-lm
+          key: mlx-swift-lm-${{ runner.os }}-v1
 
       - name: Cache Xcode DerivedData
         uses: actions/cache@v4
         with:
           path: DerivedData
-          key: deriveddata-${{ runner.os }}-${{ hashFiles('PhoneClaw.xcodeproj/project.pbxproj') }}
+          key: deriveddata-${{ runner.os }}-${{ hashFiles('PhoneClaw.xcodeproj/project.pbxproj', '**/Package.swift', '**/Package.resolved', 'Podfile.lock') }}
           restore-keys: |
             deriveddata-${{ runner.os }}-
 
@@ -49,15 +57,23 @@ jobs:
           INFERENCE_KIT_DIR="Packages/InferenceKit"
           MLXLLM_DIR="$INFERENCE_KIT_DIR/Libraries/MLXLLM"
 
-          echo "📦 Cloning upstream mlx-swift-lm (sparse, no history)..."
-          git clone \
-            --depth 1 \
-            --filter=blob:none \
-            --sparse \
-            "$UPSTREAM_REPO" /tmp/mlx-swift-lm
+          CACHE_DIR="$GITHUB_WORKSPACE/.ci-cache/mlx-swift-lm"
 
-          cd /tmp/mlx-swift-lm
-          git sparse-checkout set Sources/MLXLLM Libraries/MLXLLM
+          if [ -d "$CACHE_DIR/.git" ]; then
+            echo "📦 Using cached upstream mlx-swift-lm checkout..."
+            cd "$CACHE_DIR"
+            git fetch --depth 1 origin HEAD || true
+          else
+            echo "📦 Cloning upstream mlx-swift-lm (sparse, no history)..."
+            rm -rf "$CACHE_DIR"
+            git clone \
+              --depth 1 \
+              --filter=blob:none \
+              --sparse \
+              "$UPSTREAM_REPO" "$CACHE_DIR"
+            cd "$CACHE_DIR"
+            git sparse-checkout set Sources/MLXLLM Libraries/MLXLLM
+          fi
 
           if [ -d "Sources/MLXLLM" ]; then
             SRC_DIR="Sources/MLXLLM"
@@ -102,7 +118,8 @@ jobs:
       - name: Install CocoaPods dependencies
         run: |
           gem install cocoapods --no-document 2>/dev/null || true
-          pod install --repo-update
+          # できるだけ repo-update を避けて高速化（必要なら Podfile.lock 変更時に更新される）
+          pod install
 
       # ─────────────────────────────────────────────
       # 5. バージョン取得
@@ -132,7 +149,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=NO \
-            | xcpretty || true
+            | xcpretty
 
       # ─────────────────────────────────────────────
       # 7. .app → Payload → .ipa パッケージング
