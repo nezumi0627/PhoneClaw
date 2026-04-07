@@ -125,17 +125,20 @@ class ToolRegistry {
     func authorizationStatus(for kind: AppPermissionKind) -> AppPermissionStatus {
         switch kind {
         case .microphone:
-            let permission: AVAudioSession.RecordPermission
             if #available(iOS 17.0, *) {
-                permission = AVAudioApplication.shared.recordPermission
+                switch AVAudioApplication.shared.recordPermission {
+                case .granted:     return .granted
+                case .denied:      return .denied
+                case .undetermined: return .notDetermined
+                @unknown default:  return .restricted
+                }
             } else {
-                permission = AVAudioSession.sharedInstance().recordPermission
-            }
-            switch permission {
-            case .granted:     return .granted
-            case .denied:      return .denied
-            case .undetermined: return .notDetermined
-            @unknown default:  return .restricted
+                switch AVAudioSession.sharedInstance().recordPermission {
+                case .granted:     return .granted
+                case .denied:      return .denied
+                case .undetermined: return .notDetermined
+                @unknown default:  return .restricted
+                }
             }
 
         case .calendar:

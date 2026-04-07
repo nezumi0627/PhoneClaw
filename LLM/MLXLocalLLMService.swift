@@ -10,6 +10,8 @@ import UIKit
 
 // MARK: - MLX Local LLM Service
 
+extension UserInput: @unchecked Sendable {}
+
 public struct BundledModelOption: Identifiable, Hashable, Sendable {
     public let id: String
     public let directoryName: String
@@ -44,6 +46,16 @@ public struct DeviceStorageInfo: Sendable {
 /// Forces MLX Metal GPU path — no CPU fallback.
 @Observable
 public class MLXLocalLLMService: LLMEngine {
+    private final class GenerationState: @unchecked Sendable {
+        var resolvedMaxOutputTokens: Int
+        var firstTokenTime: Double?
+        var tokenCount: Int = 0
+        var hitTokenCap: Bool = false
+
+        init(resolvedMaxOutputTokens: Int) {
+            self.resolvedMaxOutputTokens = resolvedMaxOutputTokens
+        }
+    }
     // MARK: - Custom Model Support
     /// ユーザーが「ファイルを選択」でインポートしたモデルのパス
     ///
@@ -537,9 +549,10 @@ public class MLXLocalLLMService: LLMEngine {
                         onToken(token)
                     }
                 }
+                let response = fullResponse
 
                 await MainActor.run {
-                    onComplete(.success(fullResponse))
+                    onComplete(.success(response))
                 }
             } catch {
                 await MainActor.run {
@@ -564,9 +577,10 @@ public class MLXLocalLLMService: LLMEngine {
                         onToken(token)
                     }
                 }
+                let response = fullResponse
 
                 await MainActor.run {
-                    onComplete(.success(fullResponse))
+                    onComplete(.success(response))
                 }
             } catch {
                 await MainActor.run {
@@ -592,9 +606,10 @@ public class MLXLocalLLMService: LLMEngine {
                         onToken(token)
                     }
                 }
+                let response = fullResponse
 
                 await MainActor.run {
-                    onComplete(.success(fullResponse))
+                    onComplete(.success(response))
                 }
             } catch {
                 await MainActor.run {
@@ -617,7 +632,7 @@ public class MLXLocalLLMService: LLMEngine {
             isLoading = false
         }
         statusMessage = "モデルを初期化中..."
-        await Gemma4Registration.setAudioCapabilityEnabled(audioCapabilityEnabled)
+        Gemma4Registration.setAudioCapabilityEnabled(audioCapabilityEnabled)
         await Gemma4Registration.register()
 
         guard Self.hasRequiredFiles(for: model, at: path) else {
@@ -1185,20 +1200,16 @@ public class MLXLocalLLMService: LLMEngine {
                 let effectiveMaxOutputTokens: Int = {
                     let multimodalCap = isMultimodal
                         ? runtimeBudget?.maxOutputTokens ?? Self.multimodalMaxOutputTokens
-                        : maxOutputTokens
-                    let thinkingCap = thinkingBudget?.maxOutputTokens ?? maxOutputTokens
-                    let textCap = textBudget?.maxOutputTokens ?? maxOutputTokens
-                    return min(maxOutputTokens, multimodalCap, thinkingCap, textCap)
+                        : self.maxOutputTokens
+                    let thinkingCap = thinkingBudget?.maxOutputTokens ?? self.maxOutputTokens
+                    let textCap = textBudget?.maxOutputTokens ?? self.maxOutputTokens
+                    return min(self.maxOutputTokens, multimodalCap, thinkingCap, textCap)
                 }()
-                var resolvedMaxOutputTokens = effectiveMaxOutputTokens
+                let generationState = GenerationState(resolvedMaxOutputTokens: effectiveMaxOutputTokens)
 
                 self.isGenerating = true
                 self.cancelled = false
                 let genStart = CFAbsoluteTimeGetCurrent()
-                var firstTokenTime: Double? = nil
-                var tokenCount = 0
-                var hitTokenCap = false
-
                 let (fp, _) = appMemoryFootprintMB()
                 print("[MEM] generateStream start — footprint: \(Int(fp)) MB, MLX active: \(MLX.GPU.activeMemory / 1_048_576) MB")
 
@@ -1207,9 +1218,9 @@ public class MLXLocalLLMService: LLMEngine {
                     _ = try await container.perform { context in
                         try await self.ensureForegroundGPUExecution()
                         if isMultimodal {
-                            print("[VLM] multimodal budget — maxOutputTokens=\(resolvedMaxOutputTokens)")
+                            print("[VLM] multimodal budget — maxOutputTokens=\(generationState.resolvedMaxOutputTokens)")
                         } else if thinkingEnabled {
-                            print("[LLM] thinking budget — baseMaxOutputTokens=\(resolvedMaxOutputTokens)")
+                            print("[LLM] thinking budget — baseMaxOutputTokens=\(generationState.resolvedMaxOutputTokens)")
                         }
                         let preparedInput = try await context.processor.prepare(input: input)
                         if isMultimodal {
@@ -1217,27 +1228,27 @@ public class MLXLocalLLMService: LLMEngine {
                         } else {
                             let preparedSequenceLength = preparedInput.text.tokens.dim(1)
                             print("[LLM] prepared sequence length=\(preparedSequenceLength)")
-                            resolvedMaxOutputTokens =
+                            generationState.resolvedMaxOutputTokens =
                                 self.adjustedTextOutputTokens(
-                                    baseMaxOutputTokens: resolvedMaxOutputTokens,
+                                    baseMaxOutputTokens: generationState.resolvedMaxOutputTokens,
                                     preparedSequenceLength: preparedSequenceLength,
                                     thinkingEnabled: thinkingEnabled
-                                ) ?? resolvedMaxOutputTokens
+                                ) ?? generationState.resolvedMaxOutputTokens
                             if textBudget != nil {
-                                print("[LLM] text budget — maxOutputTokens=\(resolvedMaxOutputTokens)")
+                                print("[LLM] text budget — maxOutputTokens=\(generationState.resolvedMaxOutputTokens)")
                             } else if thinkingEnabled {
-                                print("[LLM] thinking budget — maxOutputTokens=\(resolvedMaxOutputTokens)")
+                                print("[LLM] thinking budget — maxOutputTokens=\(generationState.resolvedMaxOutputTokens)")
                             }
                         }
                         try await self.ensureForegroundGPUExecution()
 
-                        return try MLXLMCommon.generate(
+                        _ = try MLXLMCommon.generate(
                             input: preparedInput,
                             parameters: .init(
-                                maxTokens: resolvedMaxOutputTokens,
-                                temperature: samplingTemperature,
-                                topP: samplingTopP,
-                                topK: samplingTopK
+                                maxTokens: generationState.resolvedMaxOutputTokens,
+                                temperature: self.samplingTemperature,
+                                topP: self.samplingTopP,
+                                topK: self.samplingTopK
                             ),
                             context: context
                         ) { tokens in
@@ -1245,9 +1256,9 @@ public class MLXLocalLLMService: LLMEngine {
                                 return .stop
                             }
 
-                            tokenCount = tokens.count
-                            if firstTokenTime == nil {
-                                firstTokenTime = (CFAbsoluteTimeGetCurrent() - genStart) * 1000
+                            generationState.tokenCount = tokens.count
+                            if generationState.firstTokenTime == nil {
+                                generationState.firstTokenTime = (CFAbsoluteTimeGetCurrent() - genStart) * 1000
                             }
 
                             // Stream the latest token
@@ -1258,22 +1269,23 @@ public class MLXLocalLLMService: LLMEngine {
 
                             // Multimodal path uses a tighter generation budget on iPhone.
                             // If we hit the cap, signal truncation so the caller can append a notice.
-                            if tokens.count >= resolvedMaxOutputTokens {
-                                hitTokenCap = true
+                            if tokens.count >= generationState.resolvedMaxOutputTokens {
+                                generationState.hitTokenCap = true
                                 return .stop
                             }
                             return .more
                         }
+                        return ()
                     }
 
                     let elapsed = CFAbsoluteTimeGetCurrent() - genStart
-                    self.stats.ttftMs = firstTokenTime ?? 0
+                    self.stats.ttftMs = generationState.firstTokenTime ?? 0
                     self.stats.tokensPerSec = elapsed > 0
-                        ? Double(tokenCount) / elapsed : 0
-                    self.stats.totalTokens = tokenCount
+                        ? Double(generationState.tokenCount) / elapsed : 0
+                    self.stats.totalTokens = generationState.tokenCount
 
                     print(
-                        "[MLX] Generated \(tokenCount) tokens in \(String(format: "%.1f", elapsed))s"
+                        "[MLX] Generated \(generationState.tokenCount) tokens in \(String(format: "%.1f", elapsed))s"
                     )
                     print(
                         "[MLX] TTFT: \(String(format: "%.0f", self.stats.ttftMs))ms, "
@@ -1287,12 +1299,12 @@ public class MLXLocalLLMService: LLMEngine {
 
                     // If we hit the token cap mid-sentence, append a visible notice.
                     // This makes truncation explicit rather than silently dropping content.
-                    if hitTokenCap {
+                    if generationState.hitTokenCap {
                         let isChinese = Locale.preferredLanguages.contains { $0.hasPrefix("zh") }
                         let modeLabel = isChinese
                             ? (thinkingEnabled ? "思考" : "输出")
                             : (thinkingEnabled ? "Thinking" : "Output")
-                        continuation.yield("\n\n> ⚠️ \(modeLabel)已达内存安全上限（\(resolvedMaxOutputTokens) tokens），内容可能不完整。")
+                        continuation.yield("\n\n> ⚠️ \(modeLabel)已达内存安全上限（\(generationState.resolvedMaxOutputTokens) tokens），内容可能不完整。")
                     }
                     continuation.finish()
                 } catch {

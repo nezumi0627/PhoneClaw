@@ -36,22 +36,28 @@ final class AudioCaptureService {
     }
 
     func refreshPermissionStatus() {
-        let permission: AVAudioSession.RecordPermission
         if #available(iOS 17.0, *) {
-            permission = AVAudioApplication.shared.recordPermission
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted:
+                permissionStatus = .granted
+            case .denied:
+                permissionStatus = .denied
+            case .undetermined:
+                permissionStatus = .notDetermined
+            @unknown default:
+                permissionStatus = .restricted
+            }
         } else {
-            permission = audioSession.recordPermission
-        }
-
-        switch permission {
-        case .granted:
-            permissionStatus = .granted
-        case .denied:
-            permissionStatus = .denied
-        case .undetermined:
-            permissionStatus = .notDetermined
-        @unknown default:
-            permissionStatus = .restricted
+            switch audioSession.recordPermission {
+            case .granted:
+                permissionStatus = .granted
+            case .denied:
+                permissionStatus = .denied
+            case .undetermined:
+                permissionStatus = .notDetermined
+            @unknown default:
+                permissionStatus = .restricted
+            }
         }
     }
 

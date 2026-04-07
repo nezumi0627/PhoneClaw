@@ -186,7 +186,6 @@ public class Gemma4Model: Module, VLMModel, KVCacheDimensionProvider {
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [any KVCache]?) -> MLXArray {
-        let cache = cache?.compactMap { $0 as? KVCache }
         let out = languageModel(inputs, cache: cache, inputsEmbeds: nil, perLayerInputs: nil)
         return out.logits
     }

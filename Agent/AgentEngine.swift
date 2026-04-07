@@ -1137,7 +1137,7 @@ class AgentEngine {
 
         case "reminders-create":
             let due = detectDateInQuestion(text).map { iso8601StringForModel(from: $0) }
-            var title = text
+            let title = text
                 .replacingOccurrences(of: "リマインドして", with: "")
                 .replacingOccurrences(of: "思い出させて", with: "")
                 .replacingOccurrences(of: "リマインダー", with: "")
