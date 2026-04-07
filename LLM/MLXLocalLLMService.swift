@@ -86,8 +86,6 @@ public class MLXLocalLLMService: LLMEngine {
             directoryName: "gemma-4-e2b-it-4bit",
             displayName: "Gemma 4 E2B",
             repositoryID: "mlx-community/gemma-4-e2b-it-4bit",
-            estimatedSizeGB: 3.58,
-            supportsImage: true,
             requiredFiles: [
                 "config.json",
                 "generation_config.json",
@@ -97,15 +95,15 @@ public class MLXLocalLLMService: LLMEngine {
                 "tokenizer.json",
                 "tokenizer_config.json",
                 "chat_template.jinja"
-            ]
+            ],
+            estimatedSizeGB: 3.58,
+            supportsImage: true
         ),
         .init(
             id: "gemma-4-e4b-it-4bit",
             directoryName: "gemma-4-e4b-it-4bit",
             displayName: "Gemma 4 E4B",
             repositoryID: "mlx-community/gemma-4-e4b-it-4bit",
-            estimatedSizeGB: 5.22,
-            supportsImage: true,
             requiredFiles: [
                 "config.json",
                 "generation_config.json",
@@ -115,7 +113,9 @@ public class MLXLocalLLMService: LLMEngine {
                 "tokenizer.json",
                 "tokenizer_config.json",
                 "chat_template.jinja"
-            ]
+            ],
+            estimatedSizeGB: 5.22,
+            supportsImage: true
         )
     ]
     static let defaultModel = availableModels[0]

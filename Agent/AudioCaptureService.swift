@@ -36,7 +36,14 @@ final class AudioCaptureService {
     }
 
     func refreshPermissionStatus() {
-        switch audioSession.recordPermission {
+        let permission: AVAudioSession.RecordPermission
+        if #available(iOS 17.0, *) {
+            permission = AVAudioApplication.shared.recordPermission
+        } else {
+            permission = audioSession.recordPermission
+        }
+
+        switch permission {
         case .granted:
             permissionStatus = .granted
         case .denied:
@@ -167,8 +174,14 @@ final class AudioCaptureService {
 
     private func requestPermission() async -> Bool {
         let granted = await withCheckedContinuation { continuation in
-            audioSession.requestRecordPermission { granted in
-                continuation.resume(returning: granted)
+            if #available(iOS 17.0, *) {
+                AVAudioApplication.requestRecordPermission { granted in
+                    continuation.resume(returning: granted)
+                }
+            } else {
+                audioSession.requestRecordPermission { granted in
+                    continuation.resume(returning: granted)
+                }
             }
         }
         refreshPermissionStatus()
