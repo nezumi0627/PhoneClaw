@@ -40,7 +40,6 @@
 		C2B3C4D5E6F718293041B2C3 /* ToolRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2B3C4D5E6F718293041B2C4 /* ToolRegistry.swift */; };
 		C3C4D5E6F7081A2B3C52D3E4 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3C4D5E6F7081A2B3C52D3E5 /* ChatModels.swift */; };
 		C4D5E6F70819A2B3C463E4F5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D5E6F70819A2B3C463E4F6 /* Theme.swift */; };
-		D5E6F7081A2B3C4D5E6F7087 /* gemma-4-e4b-it-4bit in Resources */ = {isa = PBXBuildFile; fileRef = D5E6F7081A2B3C4D5E6F7086 /* gemma-4-e4b-it-4bit */; };
 		ICONASSETS0000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ICONASSETS0000000000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -73,8 +72,6 @@
 		C3C4D5E6F7081A2B3C52D3E5 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		C4D5E6F70819A2B3C463E4F6 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		D269F8BFCAB68D82440F704B /* SkillsManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsManagerView.swift; sourceTree = "<group>"; };
-		D5E6F7081A2B3C4D5E6F7084 /* gemma-4-e2b-it-4bit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "gemma-4-e2b-it-4bit"; path = "Models/gemma-4-e2b-it-4bit"; sourceTree = "<group>"; };
-		D5E6F7081A2B3C4D5E6F7086 /* gemma-4-e4b-it-4bit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "gemma-4-e4b-it-4bit"; path = "Models/gemma-4-e4b-it-4bit"; sourceTree = "<group>"; };
 		E18A47114A10132E25E220F8 /* AgentEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentEngine.swift; sourceTree = "<group>"; };
 		E62C3CEFC7AE63873D751E75 /* ConfigurationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationsView.swift; sourceTree = "<group>"; };
 		F5ED928BF14864713A9A9D16 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -113,8 +110,6 @@
 			isa = PBXGroup;
 			children = (
 				D21E6B56B839A63857912FE0 /* PhoneClaw */,
-				D5E6F7081A2B3C4D5E6F7084 /* gemma-4-e2b-it-4bit */,
-				D5E6F7081A2B3C4D5E6F7086 /* gemma-4-e4b-it-4bit */,
 				AC5E0AA2711EA01E891DE3A7 /* Products */,
 				03C67BBB35FEB376174D7420 /* Pods */,
 				E1D6A9BAE368B2FB909A7774 /* Frameworks */,
@@ -288,7 +283,6 @@
 				isa = PBXResourcesBuildPhase;
 				buildActionMask = 2147483647;
 				files = (
-					D5E6F7081A2B3C4D5E6F7087 /* gemma-4-e4b-it-4bit in Resources */,
 					ICONASSETS0000000000002 /* Assets.xcassets in Resources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
