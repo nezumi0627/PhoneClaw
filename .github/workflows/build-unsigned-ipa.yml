@@ -19,13 +19,69 @@ jobs:
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────────────
-      # 2. Xcode バージョン確認
+      # 2. InferenceKit (mlx-swift-lm) のモデルファイル補完
+      #    Packages/InferenceKit/Libraries/MLXLLM/ には
+      #    LLMModel.swift と LLMModelFactory.swift しか含まれないため、
+      #    上流リポジトリからモデル実装ファイル群を取得する
+      # ─────────────────────────────────────────────
+      - name: Fetch upstream MLXLLM model sources
+        run: |
+          # InferenceKit の Package.swift から上流リポジトリの URL を取得
+          UPSTREAM_REPO="https://github.com/ml-explore/mlx-swift-lm.git"
+          INFERENCE_KIT_DIR="Packages/InferenceKit"
+          MLXLLM_DIR="$INFERENCE_KIT_DIR/Libraries/MLXLLM"
+
+          echo "📦 Cloning upstream mlx-swift-lm (sparse, no history)..."
+          git clone \
+            --depth 1 \
+            --filter=blob:none \
+            --sparse \
+            "$UPSTREAM_REPO" /tmp/mlx-swift-lm
+
+          cd /tmp/mlx-swift-lm
+          git sparse-checkout set Sources/MLXLLM Libraries/MLXLLM
+
+          # 上流が Sources/ か Libraries/ どちらの構成かを自動判定してコピー
+          if [ -d "Sources/MLXLLM" ]; then
+            SRC_DIR="Sources/MLXLLM"
+          elif [ -d "Libraries/MLXLLM" ]; then
+            SRC_DIR="Libraries/MLXLLM"
+          else
+            echo "❌ Could not find MLXLLM source directory in upstream repo"
+            exit 1
+          fi
+
+          cd $GITHUB_WORKSPACE
+          echo "📁 Copying model sources from upstream $SRC_DIR → $MLXLLM_DIR ..."
+
+          # 既存の LLMModel.swift / LLMModelFactory.swift / Lora+*.swift は
+          # このリポジトリのカスタム版を優先するため上書きしない
+          PRESERVE="LLMModel.swift LLMModelFactory.swift Lora+Data.swift LoraTrain.swift"
+
+          for f in /tmp/mlx-swift-lm/$SRC_DIR/*.swift; do
+            fname=$(basename "$f")
+            skip=false
+            for p in $PRESERVE; do
+              [ "$fname" = "$p" ] && skip=true && break
+            done
+            if [ "$skip" = false ]; then
+              cp "$f" "$MLXLLM_DIR/$fname"
+              echo "  ✅ $fname"
+            else
+              echo "  ⏭ $fname (kept local version)"
+            fi
+          done
+
+          echo "✅ Model sources fetched successfully"
+
+      # ─────────────────────────────────────────────
+      # 3. Xcode バージョン確認
       # ─────────────────────────────────────────────
       - name: Show Xcode version
         run: xcodebuild -version
 
       # ─────────────────────────────────────────────
-      # 3. CocoaPods インストール
+      # 4. CocoaPods インストール
       # ─────────────────────────────────────────────
       - name: Install CocoaPods dependencies
         run: |
@@ -33,7 +89,7 @@ jobs:
           pod install --repo-update
 
       # ─────────────────────────────────────────────
-      # 4. バージョン取得
+      # 5. バージョン取得
       # ─────────────────────────────────────────────
       - name: Get version from Info.plist
         id: version
@@ -45,7 +101,7 @@ jobs:
           echo "📦 Version: $VERSION ($BUILD)"
 
       # ─────────────────────────────────────────────
-      # 5. xcarchive ビルド（署名なし）
+      # 6. xcarchive ビルド（署名なし）
       # ─────────────────────────────────────────────
       - name: Build archive (unsigned)
         run: |
@@ -62,7 +118,7 @@ jobs:
             | xcpretty || true
 
       # ─────────────────────────────────────────────
-      # 6. .app → Payload → .ipa パッケージング
+      # 7. .app → Payload → .ipa パッケージング
       # ─────────────────────────────────────────────
       - name: Package IPA
         run: |
@@ -74,7 +130,7 @@ jobs:
           echo "✅ IPA created: $(du -sh PhoneClaw.ipa | cut -f1)"
 
       # ─────────────────────────────────────────────
-      # 7. GitHub Release として公開
+      # 8. GitHub Release として公開
       # ─────────────────────────────────────────────
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
@@ -88,7 +144,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # ─────────────────────────────────────────────
-      # 8. アーティファクトとしてもアップロード
+      # 9. アーティファクトとしてもアップロード
       # ─────────────────────────────────────────────
       - name: Upload IPA as artifact
         uses: actions/upload-artifact@v4
