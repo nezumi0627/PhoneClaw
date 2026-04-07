@@ -4,6 +4,37 @@ import MLX
 import MLXLMCommon
 import MLXVLM
 
+/// Qwen2-VL / Qwen3-VL 形式のマルチモーダルプロンプトを組み立てる MessageGenerator。
+/// MLXLMCommon のテスト `UserInputTests` と互換のフォーマットを実装する。
+struct Qwen2VLMessageGenerator: MessageGenerator {
+
+    func generate(messages: [Chat.Message]) -> [Message] {
+        messages.map { generate(message: $0) }
+    }
+
+    func generate(message: Chat.Message) -> Message {
+        var contentBlocks: [[String: any Sendable]] = []
+
+        // 画像
+        if !message.images.isEmpty {
+            contentBlocks.append(["type": "image"])
+        }
+
+        // テキスト
+        if !message.content.isEmpty {
+            contentBlocks.append([
+                "type": "text",
+                "text": message.content,
+            ])
+        }
+
+        return [
+            "role": message.role.rawValue,
+            "content": contentBlocks,
+        ]
+    }
+}
+
 private enum Gemma4AudioProcessingError: LocalizedError {
     case urlInputNotSupported(URL)
     case multipleAudioInputs(Int)
