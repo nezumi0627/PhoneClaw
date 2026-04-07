@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: macos-15          # Xcode 16 / iOS 18 SDK が必要
+    env:
+      DERIVED_DATA_PATH: ${{ runner.temp }}/DerivedData
 
     steps:
       # ─────────────────────────────────────────────
@@ -15,6 +17,27 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # ─────────────────────────────────────────────
+      # 1.5 CocoaPods / Xcode のビルドキャッシュ
+      # ─────────────────────────────────────────────
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('Podfile.lock') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
+      - name: Cache Xcode DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DERIVED_DATA_PATH }}
+          key: deriveddata-${{ runner.os }}-${{ hashFiles('PhoneClaw.xcodeproj/project.pbxproj') }}
+          restore-keys: |
+            deriveddata-${{ runner.os }}-
 
       # ─────────────────────────────────────────────
       # 2. InferenceKit (mlx-swift-lm) のモデルファイル補完
@@ -105,6 +128,7 @@ jobs:
             -scheme PhoneClaw \
             -configuration Release \
             -archivePath $RUNNER_TEMP/PhoneClaw.xcarchive \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
             -destination "generic/platform=iOS" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
