@@ -33,7 +33,11 @@ public enum ModelInstallState: Equatable, Sendable {
 public class MLXLocalLLMService: LLMEngine {
     // MARK: - Custom Model Support
     /// ユーザーが「ファイルを選択」でインポートしたモデルのパス
-    @MainActor
+    ///
+    /// - Note: LiveContainer などの環境では MainActor の分離が厳密に検証され、
+    ///   `MainActor.assumeIsolated` の誤用がプロセスを SIGTRAP で落とすことがある。
+    ///   ここは UI 状態ではなく永続ストレージ(UserDefaults)へのアクセスなので、
+    ///   MainActor への隔離を外して同期的に扱う。
     public static var customModelPaths: [String: URL] {
         get {
             guard let data = UserDefaults.standard.data(forKey: "customModelPaths"),
@@ -48,14 +52,12 @@ public class MLXLocalLLMService: LLMEngine {
         }
     }
 
-    @MainActor
     public static func registerCustomModel(name: String, url: URL) {
         var paths = customModelPaths
         paths[name] = url
         customModelPaths = paths
     }
 
-    @MainActor
     public static func unregisterCustomModel(name: String) {
         var paths = customModelPaths
         paths.removeValue(forKey: name)
@@ -195,7 +197,7 @@ public class MLXLocalLLMService: LLMEngine {
 
     private static func resolveModelPath(for model: BundledModelOption) -> URL {
         // 1. ユーザー登録のカスタムパスを最優先で確認
-        if let customURL = (try? MainActor.assumeIsolated { customModelPaths[model.id] }) {
+        if let customURL = customModelPaths[model.id] {
             return customURL
         }
         // 2. バンドル内蔵
