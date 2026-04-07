@@ -63,6 +63,7 @@ jobs:
             echo "📦 Using cached upstream mlx-swift-lm checkout..."
             cd "$CACHE_DIR"
             git fetch --depth 1 origin HEAD || true
+            git sparse-checkout set Sources/MLXLLM Libraries/MLXLLM
           else
             echo "📦 Cloning upstream mlx-swift-lm (sparse, no history)..."
             rm -rf "$CACHE_DIR"
@@ -90,7 +91,14 @@ jobs:
           # 既存のカスタムファイルは上書きしない
           PRESERVE="LLMModel.swift LLMModelFactory.swift Lora+Data.swift LoraTrain.swift"
 
-          for f in /tmp/mlx-swift-lm/$SRC_DIR/*.swift; do
+          shopt -s nullglob
+          FILES=("$CACHE_DIR"/"$SRC_DIR"/*.swift)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "❌ No Swift model source files found in $CACHE_DIR/$SRC_DIR"
+            exit 1
+          fi
+
+          for f in "${FILES[@]}"; do
             fname=$(basename "$f")
             skip=false
             for p in $PRESERVE; do
