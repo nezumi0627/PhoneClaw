@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Skills 管理面板（iOS 版）
+// MARK: - Skills 管理パネル（iOS 版）
 
 struct SkillsManagerView: View {
     @Bindable var engine: AgentEngine
@@ -12,7 +12,7 @@ struct SkillsManagerView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // 顶部操作栏
+                // 上部操作バー
                 HStack(spacing: 12) {
                     Button { engine.reloadSkills() } label: {
                         Image(systemName: "arrow.clockwise")
@@ -22,10 +22,10 @@ struct SkillsManagerView: View {
 
                     Spacer()
 
-                    Button("Enable all") { engine.setAllSkills(enabled: true) }
+                    Button("すべて有効") { engine.setAllSkills(enabled: true) }
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.accent)
-                    Button("Disable all") { engine.setAllSkills(enabled: false) }
+                    Button("すべて無効") { engine.setAllSkills(enabled: false) }
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
                 }
@@ -34,7 +34,7 @@ struct SkillsManagerView: View {
 
                 Rectangle().fill(Theme.border).frame(height: 1)
 
-                // Skill 列表
+                // Skill リスト
                 ScrollView {
                     VStack(spacing: 10) {
                         ForEach(engine.skillEntries.indices, id: \.self) { i in
@@ -54,15 +54,15 @@ struct SkillsManagerView: View {
 
                 Rectangle().fill(Theme.border).frame(height: 1)
 
-                // 底部
+                // 下部
                 HStack {
-                    Text("\(enabledCount)/\(engine.skillEntries.count) enabled")
+                    Text("\(enabledCount)/\(engine.skillEntries.count) 有効")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.textTertiary)
 
                     Spacer()
 
-                    Button("Done") { dismiss() }
+                    Button("完了") { dismiss() }
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Theme.accent)
                         .padding(.horizontal, 24)
@@ -72,7 +72,7 @@ struct SkillsManagerView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             }
-            .navigationTitle("Skills")
+            .navigationTitle("スキル管理")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .background(Theme.bg)
@@ -91,7 +91,7 @@ struct SkillsManagerView: View {
     }
 }
 
-// MARK: - 单个 Skill 详情卡片（三层架构展示 + 编辑）
+// MARK: - 単一 Skill 詳細カード（3層アーキテクチャ表示 + 編集）
 
 struct SkillDetailCard: View {
     @Binding var entry: SkillEntry
@@ -104,7 +104,7 @@ struct SkillDetailCard: View {
     @State private var showSource = false
     @State private var saveFlash = false
 
-    /// L2: SKILL.md 的 Markdown body（指令体，注入 LLM）
+    /// L2: SKILL.md の Markdown 本文（指示体、LLM に注入）
     private var skillBody: String? {
         guard let url = entry.filePath,
               let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
@@ -120,7 +120,7 @@ struct SkillDetailCard: View {
         return nil
     }
 
-    /// 完整 SKILL.md 原始内容
+    /// SKILL.md の生の内容
     private var rawContent: String {
         guard let url = entry.filePath,
               let content = try? String(contentsOf: url, encoding: .utf8) else { return "" }
@@ -129,7 +129,7 @@ struct SkillDetailCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // ── 头部 ──
+            // ── ヘッダー ──
             HStack(spacing: 10) {
                 Image(systemName: entry.icon)
                     .font(.system(size: 15))
@@ -168,13 +168,13 @@ struct SkillDetailCard: View {
             .contentShape(Rectangle())
             .onTapGesture { onToggleExpand() }
 
-            // ── 展开详情：三层架构 ──
+            // ── 展開詳細：3層アーキテクチャ ──
             if isExpanded {
                 Rectangle().fill(Theme.border).frame(height: 1)
 
                 VStack(alignment: .leading, spacing: 14) {
 
-                    // ━━ L1: TOOLS（原生工具 · ToolRegistry） ━━
+                    // ━━ L1: TOOLS（ネイティブツール · ToolRegistry） ━━
                     if !entry.tools.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 6) {
@@ -200,7 +200,7 @@ struct SkillDetailCard: View {
                                             Text(tool.name)
                                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                                                 .foregroundStyle(Theme.textPrimary)
-                                            Text(ToolRegistry.shared.hasToolNamed(tool.name) ? "registered" : "missing")
+                                            Text(ToolRegistry.shared.hasToolNamed(tool.name) ? "登録済み" : "未登録")
                                                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                                                 .foregroundStyle(ToolRegistry.shared.hasToolNamed(tool.name) ? Theme.accentGreen : .orange)
                                                 .padding(.horizontal, 5)
@@ -213,9 +213,9 @@ struct SkillDetailCard: View {
                                         Text(tool.description)
                                             .font(.system(size: 11))
                                             .foregroundStyle(Theme.textSecondary)
-                                        if tool.parameters != "无" {
+                                        if tool.parameters != "なし" {
                                             HStack(spacing: 4) {
-                                                Text("参数:")
+                                                Text("パラメータ:")
                                                     .foregroundStyle(Theme.textTertiary)
                                                 Text(tool.parameters)
                                                     .foregroundStyle(Theme.textSecondary)
@@ -231,20 +231,20 @@ struct SkillDetailCard: View {
                         }
                     }
 
-                    // ━━ EXAMPLE ━━
+                    // ━━ 使用例 ━━
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("EXAMPLE")
+                        Text("使用例")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(Theme.textTertiary)
                             .kerning(1)
 
-                        Text("\"\(entry.samplePrompt)\"")
+                        Text("「\(entry.samplePrompt)」")
                             .font(.system(size: 12, design: .rounded))
                             .foregroundStyle(Theme.textSecondary)
                             .italic()
                     }
 
-                    // ━━ L2: INSTRUCTIONS（Markdown body · 注入 LLM 上下文） ━━
+                    // ━━ L2: INSTRUCTIONS（Markdown 本文 · LLM コンテキストに注入） ━━
                     if let body = skillBody {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 6) {
@@ -252,7 +252,7 @@ struct SkillDetailCard: View {
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(Theme.textTertiary)
                                     .kerning(1)
-                                Text("· LLM Context")
+                                Text("· LLM コンテキスト")
                                     .font(.system(size: 9, design: .monospaced))
                                     .foregroundStyle(Theme.textTertiary.opacity(0.6))
                             }
@@ -267,7 +267,7 @@ struct SkillDetailCard: View {
                         }
                     }
 
-                    // ━━ SKILL.MD 源文件（查看 / 编辑 / 保存 / 热重载） ━━
+                    // ━━ SKILL.MD ソースファイル（閲覧 / 編集 / 保存 / ホットリロード） ━━
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 6) {
                             Text("SKILL.MD")
@@ -286,7 +286,7 @@ struct SkillDetailCard: View {
                             Spacer()
 
                             if isEditing {
-                                Button("Cancel") {
+                                Button("キャンセル") {
                                     isEditing = false
                                 }
                                 .font(.system(size: 11, weight: .medium))
@@ -304,7 +304,7 @@ struct SkillDetailCard: View {
                                     HStack(spacing: 3) {
                                         Image(systemName: "arrow.down.doc")
                                             .font(.system(size: 9))
-                                        Text("Save & Reload")
+                                        Text("保存 & リロード")
                                             .font(.system(size: 11, weight: .semibold))
                                     }
                                     .foregroundStyle(Theme.bg)
@@ -321,7 +321,7 @@ struct SkillDetailCard: View {
                                     HStack(spacing: 3) {
                                         Image(systemName: "pencil")
                                             .font(.system(size: 9))
-                                        Text("Edit")
+                                        Text("編集")
                                             .font(.system(size: 11, weight: .medium))
                                     }
                                     .foregroundStyle(Theme.accent)
@@ -334,7 +334,7 @@ struct SkillDetailCard: View {
                                     HStack(spacing: 3) {
                                         Image(systemName: showSource ? "eye.slash" : "eye")
                                             .font(.system(size: 9))
-                                        Text(showSource ? "Hide" : "View")
+                                        Text(showSource ? "非表示" : "表示")
                                             .font(.system(size: 11, weight: .medium))
                                     }
                                     .foregroundStyle(Theme.textSecondary)
@@ -346,7 +346,7 @@ struct SkillDetailCard: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 10))
-                                Text("Saved & reloaded")
+                                Text("保存・リロード完了")
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundStyle(Theme.accentGreen)

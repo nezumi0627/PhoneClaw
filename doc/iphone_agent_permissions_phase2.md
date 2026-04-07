@@ -1,473 +1,473 @@
-# 第二部分：用户数据权限（需用户授权）
+# 第二部: ユーザーデータ権限（ユーザー認証が必要）
 
 ---
 
-## 7. 📸 相册 — PhotoKit (Photos Framework)
+## 7. 📸 写真ライブラリ — PhotoKit (Photos Framework)
 
-### 权限配置
+### 権限設定
 ```
-Info.plist: NSPhotoLibraryUsageDescription          (读取)
-Info.plist: NSPhotoLibraryAddUsageDescription        (仅写入)
+Info.plist: NSPhotoLibraryUsageDescription          （読み取り）
+Info.plist: NSPhotoLibraryAddUsageDescription        （書き込みのみ）
 ```
 
-> iOS 14+ 支持"选择部分照片"的有限访问模式 (PHAccessLevel.limited)
+> iOS 14+ では「一部の写真のみ選択」の制限アクセスモード (PHAccessLevel.limited) に対応
 
-### 可调用 API
+### 呼び出し可能 API
 
-| API | 框架 | 能力 |
+| API | フレームワーク | 機能 |
 |-----|------|------|
-| `PHAsset.fetchAssets()` | Photos | 查询所有照片/视频资产 |
-| `PHAsset` 属性 | Photos | 获取: 创建日期、位置、尺寸、媒体类型、收藏状态 |
-| `PHImageManager.requestImage()` | Photos | 获取指定尺寸的图片数据 |
-| `PHImageManager.requestAVAsset()` | Photos | 获取视频的 AVAsset |
-| `PHAssetCollection.fetchAssetCollections()` | Photos | 查询相册列表 |
-| `PHAssetCreationRequest` | Photos | 保存新照片到相册 |
-| `PHAssetChangeRequest` | Photos | 修改照片元数据（收藏、隐藏等）|
-| `PHFetchOptions` (predicate/sortDescriptors) | Photos | 按日期、位置、媒体类型筛选 |
-| `PHPhotoLibrary.shared().performChanges()` | Photos | 批量修改操作 |
+| `PHAsset.fetchAssets()` | Photos | 全写真/動画アセットの照会 |
+| `PHAsset` 属性 | Photos | 作成日・位置情報・サイズ・メディアタイプ・お気に入り状態の取得 |
+| `PHImageManager.requestImage()` | Photos | 指定サイズの画像データ取得 |
+| `PHImageManager.requestAVAsset()` | Photos | 動画の AVAsset 取得 |
+| `PHAssetCollection.fetchAssetCollections()` | Photos | アルバム一覧の照会 |
+| `PHAssetCreationRequest` | Photos | 新しい写真をアルバムに保存 |
+| `PHAssetChangeRequest` | Photos | 写真のメタデータ変更（お気に入り・非表示など）|
+| `PHFetchOptions` (predicate/sortDescriptors) | Photos | 日付・位置・メディアタイプでフィルタ |
+| `PHPhotoLibrary.shared().performChanges()` | Photos | バッチ変更操作 |
 
 ### Agent Skills
 
 ```
 skill: photos_search
-  参数: { query: "上周的收据", type: "image", dateRange: "last_week" }
-  → PHFetchOptions 按日期筛选 
-  → PHImageManager 获取缩略图 → Gemma 4 批量图片理解
-  → 返回: { matches: [{ id: "...", date: "2026-03-28", 
-            description: "星巴克收据 ¥35" }] }
+  パラメータ: { query: "先週のレシート", type: "image", dateRange: "last_week" }
+  → PHFetchOptions で日付フィルタ 
+  → PHImageManager でサムネイル取得 → Gemma 4 で一括画像理解
+  → 返り値: { matches: [{ id: "...", date: "2026-03-28", 
+            description: "スターバックスのレシート ¥580" }] }
 
 skill: photos_recent
-  参数: { count: 10 }
-  → 获取最近 N 张照片
-  → 返回: [{ id, date, location, thumbnail }]
+  パラメータ: { count: 10 }
+  → 最新 N 枚の写真を取得
+  → 返り値: [{ id, date, location, thumbnail }]
 
 skill: photos_save
-  参数: { image: UIImage }
-  → PHAssetCreationRequest 保存到相册
-  → 返回: { saved: true, assetId: "..." }
+  パラメータ: { image: UIImage }
+  → PHAssetCreationRequest でアルバムに保存
+  → 返り値: { saved: true, assetId: "..." }
 
 skill: photos_by_location
-  参数: { location: "杭州", radius: 5000 }
+  パラメータ: { location: "東京", radius: 5000 }
   → PHFetchOptions + CLLocation predicate
-  → 返回按地点筛选的照片列表
+  → 場所でフィルタされた写真一覧を返す
 
 skill: photos_organize
-  → 批量获取照片 → Gemma 4 分类（风景/人物/文档/食物/截图）
-  → 返回分类建议: { categories: { food: [ids], docs: [ids], ... } }
+  → 写真を一括取得 → Gemma 4 で分類（風景/人物/文書/食べ物/スクリーンショット）
+  → 分類の提案を返す: { categories: { food: [ids], docs: [ids], ... } }
 
 skill: photo_edit_metadata
-  参数: { assetId: "...", favorite: true }
-  → PHAssetChangeRequest 修改元数据
-  → 返回: { updated: true }
+  パラメータ: { assetId: "...", favorite: true }
+  → PHAssetChangeRequest でメタデータを変更
+  → 返り値: { updated: true }
 ```
 
-### 杀手级场景
+### 強力なシナリオ
 
 ```
-用户: "帮我找上周拍的那张发票"
-  → photos_search(query: "发票", dateRange: "last_week")
-  → Gemma 4 逐张分析缩略图，识别发票
-  → "找到了，是3月28日拍的，金额¥1,280，
-     开票方: XX科技有限公司，要我帮你提取详细信息吗？"
+ユーザー: 「先週撮った領収書を探してください」
+  → photos_search(query: "領収書", dateRange: "last_week")
+  → Gemma 4 がサムネイルを1枚ずつ分析して領収書を識別
+  → 「見つかりました。3月28日撮影の領収書、金額¥12,800、
+     発行元: ○○テクノロジー株式会社です。詳細情報を抽出しましょうか？」
 
-用户: "整理我这个月的照片"
-  → photos_organize → Gemma 4 批量分类
-  → "这个月共 247 张照片:
-     - 自拍/人物: 45张
-     - 食物: 32张  
-     - 风景: 28张
-     - 截图: 89张 (建议清理)
-     - 文档/收据: 18张
-     - 其他: 35张
-     要我帮你把截图移到单独相册吗？"
+ユーザー: 「今月の写真を整理してください」
+  → photos_organize → Gemma 4 が一括分類
+  → 「今月は合計 247 枚の写真があります:
+     - 自撮り/人物: 45枚
+     - 食べ物: 32枚  
+     - 風景: 28枚
+     - スクリーンショット: 89枚（削除を推奨）
+     - 文書/領収書: 18枚
+     - その他: 35枚
+     スクリーンショットを別のアルバムに移動しましょうか？」
 ```
 
 ---
 
-## 8. 👤 通讯录 — Contacts Framework
+## 8. 👤 連絡先 — Contacts Framework
 
-### 权限配置
+### 権限設定
 ```
 Info.plist: NSContactsUsageDescription
 ```
 
-### 可调用 API
+### 呼び出し可能 API
 
-| API | 框架 | 能力 |
+| API | フレームワーク | 機能 |
 |-----|------|------|
-| `CNContactStore.requestAccess()` | Contacts | 请求通讯录权限 |
-| `CNContactStore.unifiedContacts(matching:)` | Contacts | 按条件查询联系人 |
-| `CNContactStore.enumerateContacts()` | Contacts | 遍历所有联系人 |
-| `CNContact` 属性 | Contacts | 姓名、电话、邮箱、地址、生日、公司、职位、头像、社交账号 |
-| `CNContactFormatter` | Contacts | 本地化格式化联系人名字 |
-| `CNSaveRequest.add()` | Contacts | 创建新联系人 |
-| `CNSaveRequest.update()` | Contacts | 更新联系人信息 |
-| `CNSaveRequest.delete()` | Contacts | 删除联系人 |
-| `CNContactFetchRequest` | Contacts | 指定获取哪些字段（性能优化）|
-| `CNGroup` / `CNContainer` | Contacts | 联系人分组管理 |
+| `CNContactStore.requestAccess()` | Contacts | 連絡先権限の要求 |
+| `CNContactStore.unifiedContacts(matching:)` | Contacts | 条件による連絡先検索 |
+| `CNContactStore.enumerateContacts()` | Contacts | 全連絡先の列挙 |
+| `CNContact` 属性 | Contacts | 名前・電話・メール・住所・誕生日・会社・肩書き・写真・SNSアカウント |
+| `CNContactFormatter` | Contacts | ローカライズされた連絡先名のフォーマット |
+| `CNSaveRequest.add()` | Contacts | 新しい連絡先の作成 |
+| `CNSaveRequest.update()` | Contacts | 連絡先情報の更新 |
+| `CNSaveRequest.delete()` | Contacts | 連絡先の削除 |
+| `CNContactFetchRequest` | Contacts | 取得するフィールドの指定（パフォーマンス最適化）|
+| `CNGroup` / `CNContainer` | Contacts | 連絡先グループ管理 |
 
 ### Agent Skills
 
 ```
 skill: contacts_search
-  参数: { name: "张三" } 或 { company: "阿里巴巴" }
+  パラメータ: { name: "田中太郎" } または { company: "ソフトバンク" }
   → CNContactStore.unifiedContacts(matching: predicate)
-  → 返回: { name: "张三", phone: "138xxxx5678", 
-            email: "zhangsan@xxx.com", company: "阿里巴巴" }
+  → 返り値: { name: "田中太郎", phone: "090xxxx5678", 
+            email: "tanaka@xxx.com", company: "ソフトバンク" }
 
 skill: contacts_create
-  参数: { name: "李四", phone: "139xxxx1234", company: "腾讯" }
+  パラメータ: { name: "鈴木一郎", phone: "080xxxx1234", company: "ドコモ" }
   → CNSaveRequest.add(contact)
-  → 返回: { created: true, contactId: "..." }
+  → 返り値: { created: true, contactId: "..." }
 
 skill: contacts_update
-  参数: { contactId: "...", phone: "新号码" }
+  パラメータ: { contactId: "...", phone: "新しい番号" }
   → CNSaveRequest.update()
-  → 返回: { updated: true }
+  → 返り値: { updated: true }
 
 skill: contacts_list_all
   → CNContactStore.enumerateContacts()
-  → 返回: { total: 352, contacts: [...] }
+  → 返り値: { total: 352, contacts: [...] }
 
 skill: contacts_birthday_upcoming
-  → 遍历所有联系人 → 筛选未来 7 天生日
-  → 返回: [{ name: "妈妈", birthday: "4月5日", daysUntil: 2 }]
+  → 全連絡先を列挙 → 7日以内の誕生日をフィルタ
+  → 返り値: [{ name: "お母さん", birthday: "4月5日", daysUntil: 2 }]
 ```
 
-### 杀手级场景
+### 強力なシナリオ
 
 ```
-用户: [拍一张名片]
-  → camera_capture → ocr_extract → Gemma 4 解析名片
-  → contacts_create(name: "王五", phone: "186...", 
-                     company: "字节跳动", title: "产品总监")
-  → "已把王五的信息存入通讯录:
-     王五 | 字节跳动 产品总监
-     电话: 186xxxx7890 | 邮箱: wangwu@bytedance.com"
+ユーザー: [名刺を撮影]
+  → camera_capture → ocr_extract → Gemma 4 が名刺を解析
+  → contacts_create(name: "山田花子", phone: "080...", 
+                     company: "株式会社○○", title: "プロダクトマネージャー")
+  → 「山田花子さんの情報を連絡先に保存しました:
+     山田花子 | 株式会社○○ プロダクトマネージャー
+     電話: 080xxxx7890 | メール: yamada@company.co.jp」
 
-用户: "这周谁过生日？"
+ユーザー: 「今週誰かの誕生日はありますか？」
   → contacts_birthday_upcoming
-  → "后天 (4月5日) 是妈妈的生日！要我帮你设置提醒吗？"
+  → 「明後日（4月5日）はお母さんの誕生日です！リマインダーを設定しましょうか？」
 ```
 
 ---
 
-## 9. 📅 日历 — EventKit
+## 9. 📅 カレンダー — EventKit
 
-### 权限配置
+### 権限設定
 ```
-Info.plist: NSCalendarsFullAccessUsageDescription      (读写)
-Info.plist: NSCalendarsWriteOnlyAccessUsageDescription  (仅写)
+Info.plist: NSCalendarsFullAccessUsageDescription      （読み書き）
+Info.plist: NSCalendarsWriteOnlyAccessUsageDescription  （書き込みのみ）
 ```
 
-### 可调用 API
+### 呼び出し可能 API
 
-| API | 框架 | 能力 |
+| API | フレームワーク | 機能 |
 |-----|------|------|
-| `EKEventStore.requestFullAccessToEvents()` | EventKit | 请求日历完整权限 |
-| `EKEventStore.events(matching:)` | EventKit | 查询日期范围内的事件 |
-| `EKEvent(eventStore:)` | EventKit | 创建新日历事件 |
-| `EKEvent` 属性 | EventKit | 标题、开始/结束时间、地点、备注、URL、重复规则、提醒 |
-| `EKAlarm` | EventKit | 事件提醒（时间偏移或绝对时间）|
-| `EKRecurrenceRule` | EventKit | 重复规则（每天/每周/每月/自定义）|
-| `EKEventStore.save()` | EventKit | 保存事件 |
-| `EKEventStore.remove()` | EventKit | 删除事件 |
-| `EKCalendar` | EventKit | 管理不同日历（工作/个人/节日等）|
-| `EKEventStore.calendars(for: .event)` | EventKit | 获取所有日历列表 |
+| `EKEventStore.requestFullAccessToEvents()` | EventKit | カレンダーの完全権限を要求 |
+| `EKEventStore.events(matching:)` | EventKit | 日付範囲内のイベントを照会 |
+| `EKEvent(eventStore:)` | EventKit | 新しいカレンダーイベントを作成 |
+| `EKEvent` 属性 | EventKit | タイトル・開始/終了時刻・場所・メモ・URL・繰り返しルール・リマインダー |
+| `EKAlarm` | EventKit | イベントリマインダー（時間オフセットまたは絶対時刻）|
+| `EKRecurrenceRule` | EventKit | 繰り返しルール（毎日/毎週/毎月/カスタム）|
+| `EKEventStore.save()` | EventKit | イベントの保存 |
+| `EKEventStore.remove()` | EventKit | イベントの削除 |
+| `EKCalendar` | EventKit | カレンダーの管理（仕事/個人/祝日など）|
+| `EKEventStore.calendars(for: .event)` | EventKit | 全カレンダー一覧の取得 |
 
 ### Agent Skills
 
 ```
 skill: calendar_query
-  参数: { from: "today", to: "next_week" }
+  パラメータ: { from: "today", to: "next_week" }
   → EKEventStore.events(matching: predicate)
-  → 返回: [{ title: "产品评审", start: "2026-04-04 14:00",
-             end: "15:00", location: "3楼会议室", calendar: "工作" }]
+  → 返り値: [{ title: "製品レビュー", start: "2026-04-04 14:00",
+             end: "15:00", location: "3F会議室", calendar: "仕事" }]
 
 skill: calendar_create
-  参数: { title: "和张三吃饭", date: "明天", time: "18:30",
-           location: "外婆家西湖店", alert: "30min_before" }
-  → 创建 EKEvent + EKAlarm
-  → 返回: { created: true, eventId: "..." }
+  パラメータ: { title: "田中さんと食事", date: "明日", time: "18:30",
+               location: "和食さと渋谷店", alert: "30min_before" }
+  → EKEvent + EKAlarm を作成
+  → 返り値: { created: true, eventId: "..." }
 
 skill: calendar_check_free
-  参数: { date: "2026-04-05" }
-  → 查询当天事件 → 计算空闲时段
-  → 返回: { busy: ["9:00-10:00", "14:00-16:00"],
+  パラメータ: { date: "2026-04-05" }
+  → 当日のイベントを照会 → 空き時間帯を計算
+  → 返り値: { busy: ["9:00-10:00", "14:00-16:00"],
             free: ["10:00-14:00", "16:00-18:00"] }
 
 skill: calendar_recurring
-  参数: { title: "周会", every: "weekly", day: "monday", time: "10:00" }
+  パラメータ: { title: "週次ミーティング", every: "weekly", day: "monday", time: "10:00" }
   → EKRecurrenceRule + EKEvent
-  → 返回: { created: true, recurrence: "每周一 10:00" }
+  → 返り値: { created: true, recurrence: "毎週月曜日 10:00" }
 
 skill: calendar_delete
-  参数: { eventId: "..." }
+  パラメータ: { eventId: "..." }
   → EKEventStore.remove()
-  → 返回: { deleted: true }
+  → 返り値: { deleted: true }
 ```
 
 ---
 
-## 10. ⏰ 提醒事项 — EventKit (Reminders)
+## 10. ⏰ リマインダー — EventKit (Reminders)
 
-### 权限配置
+### 権限設定
 ```
 Info.plist: NSRemindersFullAccessUsageDescription
 ```
 
-### 可调用 API
+### 呼び出し可能 API
 
-| API | 框架 | 能力 |
+| API | フレームワーク | 機能 |
 |-----|------|------|
-| `EKEventStore.requestFullAccessToReminders()` | EventKit | 请求提醒权限 |
-| `EKEventStore.fetchReminders(matching:)` | EventKit | 查询提醒 |
-| `EKReminder(eventStore:)` | EventKit | 创建提醒 |
-| `EKReminder` 属性 | EventKit | 标题、备注、优先级、完成状态、截止日期 |
-| `EKAlarm` | EventKit | 时间提醒或位置提醒 |
-| `EKAlarm(relativeOffset:)` | EventKit | 相对时间提醒 |
-| `EKAlarm(structuredLocation:proximity:)` | EventKit | 到达/离开某地时提醒 |
-| `EKEventStore.save()` / `.remove()` | EventKit | 保存/删除提醒 |
+| `EKEventStore.requestFullAccessToReminders()` | EventKit | リマインダー権限の要求 |
+| `EKEventStore.fetchReminders(matching:)` | EventKit | リマインダーの照会 |
+| `EKReminder(eventStore:)` | EventKit | リマインダーの作成 |
+| `EKReminder` 属性 | EventKit | タイトル・メモ・優先度・完了状態・期限日 |
+| `EKAlarm` | EventKit | 時間リマインダーまたは位置リマインダー |
+| `EKAlarm(relativeOffset:)` | EventKit | 相対時間リマインダー |
+| `EKAlarm(structuredLocation:proximity:)` | EventKit | 特定の場所への到着/退出時のリマインダー |
+| `EKEventStore.save()` / `.remove()` | EventKit | リマインダーの保存/削除 |
 
 ### Agent Skills
 
 ```
 skill: reminders_query
-  参数: { list: "购物清单", completed: false }
-  → fetchReminders → 返回未完成提醒列表
+  パラメータ: { list: "買い物リスト", completed: false }
+  → fetchReminders → 未完了リマインダーの一覧を返す
 
 skill: reminders_create
-  参数: { title: "买牛奶", list: "购物清单", 
-           dueDate: "明天", priority: 1 }
-  → 创建 EKReminder + 设置到期日
-  → 返回: { created: true, id: "..." }
+  パラメータ: { title: "牛乳を買う", list: "買い物リスト", 
+               dueDate: "明日", priority: 1 }
+  → EKReminder を作成 + 期限日を設定
+  → 返り値: { created: true, id: "..." }
 
 skill: reminders_location_based
-  参数: { title: "取快递", location: "小区门口",
-           trigger: "arriving" }
+  パラメータ: { title: "宅配便を受け取る", location: "マンション入口",
+               trigger: "arriving" }
   → EKAlarm(structuredLocation:, proximity: .enter)
-  → 到达指定位置时触发提醒
+  → 指定場所に到着した時にリマインダーをトリガー
 
 skill: reminders_complete
-  参数: { id: "..." }
+  パラメータ: { id: "..." }
   → reminder.isCompleted = true → save
-  → 返回: { completed: true }
+  → 返り値: { completed: true }
 
 skill: reminders_batch_create
-  参数: { list: "出差清单", items: ["充电宝","身份证","笔记本"] }
-  → 批量创建提醒
-  → 返回: { created: 3, list: "出差清单" }
+  パラメータ: { list: "出張チェックリスト", items: ["モバイルバッテリー","身分証","ノートPC"] }
+  → リマインダーを一括作成
+  → 返り値: { created: 3, list: "出張チェックリスト" }
 ```
 
 ---
 
-## 11. ❤️ 健康数据 — HealthKit
+## 11. ❤️ ヘルスデータ — HealthKit
 
-### 权限配置
+### 権限設定
 ```
-Info.plist: NSHealthShareUsageDescription    (读取)
-Info.plist: NSHealthUpdateUsageDescription   (写入)
+Info.plist: NSHealthShareUsageDescription    （読み取り）
+Info.plist: NSHealthUpdateUsageDescription   （書き込み）
 Entitlement: com.apple.developer.healthkit
-Background Mode: Background fetch (用于后台健康数据更新)
+Background Mode: Background fetch （バックグラウンドでのヘルスデータ更新が必要な場合）
 ```
 
-> HealthKit 权限粒度极细——每个数据类型(步数/心率/睡眠...)需单独授权
+> HealthKit の権限粒度は非常に細かく、各データタイプ（歩数/心拍数/睡眠など）を個別に認証する必要があります
 
-### 可调用 API
+### 呼び出し可能 API
 
-| API / 数据类型 | 框架 | 能力 |
+| API / データタイプ | フレームワーク | 機能 |
 |-----|------|------|
-| `HKHealthStore.requestAuthorization()` | HealthKit | 按类型请求权限 |
-| `HKQuantityType(.stepCount)` | HealthKit | 步数 |
-| `HKQuantityType(.heartRate)` | HealthKit | 心率 (bpm) |
-| `HKQuantityType(.activeEnergyBurned)` | HealthKit | 活动消耗卡路里 |
-| `HKQuantityType(.distanceWalkingRunning)` | HealthKit | 步行跑步距离 |
-| `HKQuantityType(.bloodOxygenSaturation)` | HealthKit | 血氧 (SpO2) |
+| `HKHealthStore.requestAuthorization()` | HealthKit | タイプ別に権限を要求 |
+| `HKQuantityType(.stepCount)` | HealthKit | 歩数 |
+| `HKQuantityType(.heartRate)` | HealthKit | 心拍数 (bpm) |
+| `HKQuantityType(.activeEnergyBurned)` | HealthKit | 活動消費カロリー |
+| `HKQuantityType(.distanceWalkingRunning)` | HealthKit | 歩行・走行距離 |
+| `HKQuantityType(.bloodOxygenSaturation)` | HealthKit | 血中酸素濃度 (SpO2) |
 | `HKQuantityType(.bodyMass)` | HealthKit | 体重 |
-| `HKQuantityType(.height)` | HealthKit | 身高 |
+| `HKQuantityType(.height)` | HealthKit | 身長 |
 | `HKQuantityType(.bodyMassIndex)` | HealthKit | BMI |
-| `HKQuantityType(.bloodPressureSystolic/Diastolic)` | HealthKit | 血压 |
-| `HKQuantityType(.bloodGlucose)` | HealthKit | 血糖 |
+| `HKQuantityType(.bloodPressureSystolic/Diastolic)` | HealthKit | 血圧 |
+| `HKQuantityType(.bloodGlucose)` | HealthKit | 血糖値 |
 | `HKQuantityType(.bodyTemperature)` | HealthKit | 体温 |
-| `HKQuantityType(.dietaryEnergyConsumed)` | HealthKit | 饮食卡路里摄入 |
-| `HKQuantityType(.dietaryWater)` | HealthKit | 饮水量 |
-| `HKCategoryType(.sleepAnalysis)` | HealthKit | 睡眠分析（入睡/浅睡/深睡/REM）|
-| `HKCategoryType(.mindfulSession)` | HealthKit | 正念冥想记录 |
-| `HKWorkout` | HealthKit | 运动记录（类型/时长/消耗）|
-| `HKStatisticsQuery` | HealthKit | 统计查询（求和/平均/最大/最小）|
-| `HKStatisticsCollectionQuery` | HealthKit | 按时间段统计（每天/每周步数趋势）|
-| `HKAnchoredObjectQuery` | HealthKit | 增量查询（新增数据）|
-| `HKObserverQuery` | HealthKit | 数据变化监听 |
-| `HKQuantitySample` | HealthKit | 写入健康数据样本 |
+| `HKQuantityType(.dietaryEnergyConsumed)` | HealthKit | 食事カロリー摂取量 |
+| `HKQuantityType(.dietaryWater)` | HealthKit | 水分摂取量 |
+| `HKCategoryType(.sleepAnalysis)` | HealthKit | 睡眠分析（入眠/浅眠/深眠/REM）|
+| `HKCategoryType(.mindfulSession)` | HealthKit | マインドフルネス瞑想記録 |
+| `HKWorkout` | HealthKit | ワークアウト記録（種類/時間/消費）|
+| `HKStatisticsQuery` | HealthKit | 統計照会（合計/平均/最大/最小）|
+| `HKStatisticsCollectionQuery` | HealthKit | 時間帯別統計（日別/週別の歩数トレンド）|
+| `HKAnchoredObjectQuery` | HealthKit | 増分照会（新規追加データ）|
+| `HKObserverQuery` | HealthKit | データ変化の監視 |
+| `HKQuantitySample` | HealthKit | ヘルスデータサンプルの書き込み |
 
 ### Agent Skills
 
 ```
 skill: health_steps
-  参数: { period: "today" | "this_week" | "this_month" }
+  パラメータ: { period: "today" | "this_week" | "this_month" }
   → HKStatisticsQuery(stepCount, sum)
-  → 返回: { steps: 8432, goal: 10000, progress: "84%" }
+  → 返り値: { steps: 8432, goal: 10000, progress: "84%" }
 
 skill: health_heart_rate
-  参数: { period: "today" }
+  パラメータ: { period: "today" }
   → HKStatisticsQuery(heartRate, min/max/avg)
-  → 返回: { resting: 62, average: 75, max: 142, 
+  → 返り値: { resting: 62, average: 75, max: 142, 
             readings: [{ time: "08:30", value: 68 }, ...] }
 
 skill: health_sleep
-  参数: { date: "last_night" }
+  パラメータ: { date: "last_night" }
   → HKSampleQuery(sleepAnalysis)
-  → 返回: { total: "7h12m", inBed: "7h45m",
-            deep: "1h30m", rem: "1h48m", light: "3h54m",
-            awake: "33m", efficiency: "93%" }
+  → 返り値: { total: "7時間12分", inBed: "7時間45分",
+            deep: "1時間30分", rem: "1時間48分", light: "3時間54分",
+            awake: "33分", efficiency: "93%" }
 
 skill: health_workout_log
-  参数: { type: "running", duration: 30, distance: 5.2 }
-  → 创建 HKWorkout 样本
-  → 返回: { logged: true, calories: 320 }
+  パラメータ: { type: "running", duration: 30, distance: 5.2 }
+  → HKWorkout サンプルを作成
+  → 返り値: { logged: true, calories: 320 }
 
 skill: health_weight_trend
-  参数: { period: "last_3_months" }
+  パラメータ: { period: "last_3_months" }
   → HKStatisticsCollectionQuery(bodyMass, weekly)
-  → 返回: { trend: "下降", data: [{week: "W1", kg: 72.5}, ...],
+  → 返り値: { trend: "減少", data: [{week: "W1", kg: 72.5}, ...],
             change: "-2.3kg" }
 
 skill: health_water_log
-  参数: { ml: 250 }
-  → 写入 HKQuantitySample(dietaryWater)
-  → 返回: { logged: true, todayTotal: "1,750ml", goal: "2,000ml" }
+  パラメータ: { ml: 250 }
+  → HKQuantitySample(dietaryWater) を書き込む
+  → 返り値: { logged: true, todayTotal: "1,750ml", goal: "2,000ml" }
 
 skill: health_blood_oxygen
   → HKSampleQuery(bloodOxygenSaturation, latest)
-  → 返回: { spo2: 98, time: "10:30" }
+  → 返り値: { spo2: 98, time: "10:30" }
 
 skill: health_comprehensive_report
-  → 并行查询: 步数 + 心率 + 睡眠 + 运动 + 体重
-  → Gemma 4 综合分析
-  → 返回自然语言健康报告
+  → 並列照会: 歩数 + 心拍数 + 睡眠 + ワークアウト + 体重
+  → Gemma 4 が総合分析
+  → 自然言語による健康レポートを返す
 ```
 
-### 杀手级场景
+### 強力なシナリオ
 
 ```
-用户: "我今天状态怎么样？"
+ユーザー: 「今日の体調はどうですか？」
   → health_comprehensive_report
-  → Gemma 4 综合分析:
-  → "整体状态不错:
-     😴 昨晚睡了7小时12分，深睡1.5小时，质量评分88分
-     🚶 今天已走 8,432 步 (目标84%)
-     ❤️ 静息心率62，正常范围
-     💧 已喝水1,250ml，还差750ml
-     建议: 下午再喝3杯水，晚上散步20分钟达标"
+  → Gemma 4 が総合分析:
+  → 「全体的に良好な状態です:
+     😴 昨夜は7時間12分の睡眠、深眠1.5時間、品質スコア88点
+     🚶 本日 8,432 歩（目標の84%）
+     ❤️ 安静時心拍数62、正常範囲内
+     💧 水分摂取1,250ml、あと750ml必要
+     提案: 午後にあと3杯の水を飲み、夜に20分散歩して目標達成を」
 
-用户: "帮我记一下，刚才跑了5公里"
+ユーザー: 「記録しておいてください、さっき5km走りました」
   → health_workout_log(type: "running", distance: 5.0)
-  → "已记录: 跑步5公里，估算消耗约310大卡，本周累计跑步15公里，不错！"
+  → 「記録しました: ランニング5km、推定消費約310kcal、今週の累計ランニング15km、素晴らしい！」
 ```
 
 ---
 
-## 12. 🎵 音乐库 — MediaPlayer + MusicKit
+## 12. 🎵 音楽ライブラリ — MediaPlayer + MusicKit
 
-### 权限配置
+### 権限設定
 ```
 Info.plist: NSAppleMusicUsageDescription
 ```
 
-### 可调用 API
+### 呼び出し可能 API
 
-| API | 框架 | 能力 |
+| API | フレームワーク | 機能 |
 |-----|------|------|
-| `MPMediaQuery.songs()` | MediaPlayer | 查询所有本地歌曲 |
-| `MPMediaQuery` (predicate) | MediaPlayer | 按艺人/专辑/流派筛选 |
-| `MPMusicPlayerController.systemMusicPlayer` | MediaPlayer | 控制系统音乐播放器 |
-| `.play()` / `.pause()` / `.skipToNextItem()` | MediaPlayer | 播放控制 |
-| `.nowPlayingItem` | MediaPlayer | 当前播放歌曲信息 |
-| `.setQueue(with:)` | MediaPlayer | 设置播放队列 |
-| `MPMediaPickerController` | MediaPlayer | 系统歌曲选择 UI |
-| `MusicCatalogSearchRequest` | MusicKit | 搜索 Apple Music 曲库 |
-| `MusicSubscription` | MusicKit | 用户订阅状态 |
+| `MPMediaQuery.songs()` | MediaPlayer | 全ローカル楽曲の照会 |
+| `MPMediaQuery` (predicate) | MediaPlayer | アーティスト/アルバム/ジャンルでフィルタ |
+| `MPMusicPlayerController.systemMusicPlayer` | MediaPlayer | システム音楽プレーヤーの操作 |
+| `.play()` / `.pause()` / `.skipToNextItem()` | MediaPlayer | 再生コントロール |
+| `.nowPlayingItem` | MediaPlayer | 現在再生中の楽曲情報 |
+| `.setQueue(with:)` | MediaPlayer | 再生キューの設定 |
+| `MPMediaPickerController` | MediaPlayer | システム楽曲選択 UI |
+| `MusicCatalogSearchRequest` | MusicKit | Apple Music カタログの検索 |
+| `MusicSubscription` | MusicKit | ユーザーのサブスクリプション状態 |
 
 ### Agent Skills
 
 ```
 skill: music_play
-  参数: { query: "周杰伦" | genre: "jazz" | album: "范特西" }
-  → MPMediaQuery 筛选 → setQueue → play()
-  → 返回: { playing: "晴天", artist: "周杰伦", album: "叶惠美" }
+  パラメータ: { query: "宇多田ヒカル" | genre: "jazz" | album: "First Love" }
+  → MPMediaQuery でフィルタ → setQueue → play()
+  → 返り値: { playing: "First Love", artist: "宇多田ヒカル", album: "First Love" }
 
 skill: music_control
-  参数: { action: "pause" | "next" | "previous" | "volume_up" }
-  → MPMusicPlayerController 控制
-  → 返回: { action: "paused" }
+  パラメータ: { action: "pause" | "next" | "previous" | "volume_up" }
+  → MPMusicPlayerController でコントロール
+  → 返り値: { action: "paused" }
 
 skill: music_now_playing
   → nowPlayingItem
-  → 返回: { title: "晴天", artist: "周杰伦", duration: "4:29", 
+  → 返り値: { title: "First Love", artist: "宇多田ヒカル", duration: "5:53", 
             progress: "2:15" }
 
 skill: music_search_library
-  参数: { artist: "陈奕迅" }
+  パラメータ: { artist: "椎名林檎" }
   → MPMediaQuery
-  → 返回: { songs: [{ title: "十年", album: "黑白灰" }, ...], total: 23 }
+  → 返り値: { songs: [{ title: "ここでキスして。", album: "無罪モラトリアム" }, ...], total: 23 }
 ```
 
 ---
 
-## 13. 📁 文件访问 — FileManager + UIDocumentPickerViewController
+## 13. 📁 ファイルアクセス — FileManager + UIDocumentPickerViewController
 
-### 权限配置
+### 権限設定
 ```
-无特殊权限 — App 沙箱内文件自由读写
-UIDocumentPickerViewController — 用户手动选择文件（无需权限声明）
+特別な権限不要 — アプリサンドボックス内のファイルを自由に読み書き
+UIDocumentPickerViewController — ユーザーが手動でファイルを選択（権限宣言不要）
 ```
 
-### 可调用 API
+### 呼び出し可能 API
 
-| API | 框架 | 能力 |
+| API | フレームワーク | 機能 |
 |-----|------|------|
-| `FileManager.default` | Foundation | 沙箱内文件 CRUD |
-| `.contentsOfDirectory(atPath:)` | Foundation | 列出目录内容 |
-| `.createFile()` / `.createDirectory()` | Foundation | 创建文件/目录 |
-| `.removeItem(atPath:)` | Foundation | 删除文件 |
-| `.copyItem()` / `.moveItem()` | Foundation | 复制/移动文件 |
-| `.attributesOfItem()` | Foundation | 获取文件属性（大小/日期）|
-| `UIDocumentPickerViewController` | UIKit | 用户选择 iCloud/本地文件 |
-| `Data(contentsOf:)` | Foundation | 读取文件内容 |
-| `data.write(to:)` | Foundation | 写入文件内容 |
-| `JSONSerialization` / `JSONDecoder` | Foundation | JSON 读写 |
-| `QLPreviewController` | QuickLook | 预览 PDF/Office/图片文件 |
+| `FileManager.default` | Foundation | サンドボックス内ファイルの CRUD |
+| `.contentsOfDirectory(atPath:)` | Foundation | ディレクトリ内容の一覧 |
+| `.createFile()` / `.createDirectory()` | Foundation | ファイル/ディレクトリの作成 |
+| `.removeItem(atPath:)` | Foundation | ファイルの削除 |
+| `.copyItem()` / `.moveItem()` | Foundation | ファイルのコピー/移動 |
+| `.attributesOfItem()` | Foundation | ファイル属性の取得（サイズ/日付）|
+| `UIDocumentPickerViewController` | UIKit | iCloud/ローカルファイルのユーザー選択 |
+| `Data(contentsOf:)` | Foundation | ファイル内容の読み取り |
+| `data.write(to:)` | Foundation | ファイル内容の書き込み |
+| `JSONSerialization` / `JSONDecoder` | Foundation | JSON の読み書き |
+| `QLPreviewController` | QuickLook | PDF/Office/画像ファイルのプレビュー |
 
 ### Agent Skills
 
 ```
 skill: file_pick
   → UIDocumentPickerViewController
-  → 用户选择文件 → 返回文件 URL
-  → 读取内容 → Gemma 4 分析
+  → ユーザーがファイルを選択 → ファイル URL を返す
+  → 内容を読み込む → Gemma 4 が分析
 
 skill: file_read
-  参数: { path: "sandbox://Documents/notes.txt" }
+  パラメータ: { path: "sandbox://Documents/notes.txt" }
   → Data(contentsOf:) → String
-  → 返回: { content: "文件内容...", size: "2.3KB" }
+  → 返り値: { content: "ファイルの内容...", size: "2.3KB" }
 
 skill: file_write
-  参数: { path: "Documents/summary.md", content: "..." }
+  パラメータ: { path: "Documents/summary.md", content: "..." }
   → data.write(to:)
-  → 返回: { written: true, path: "..." }
+  → 返り値: { written: true, path: "..." }
 
 skill: file_list
-  参数: { directory: "Documents" }
+  パラメータ: { directory: "Documents" }
   → contentsOfDirectory
-  → 返回: [{ name: "notes.txt", size: "2.3KB", modified: "..." }]
+  → 返り値: [{ name: "notes.txt", size: "2.3KB", modified: "..." }]
 
 skill: file_analyze_pdf
-  → file_pick (用户选PDF) → 提取文本 → Gemma 4 总结
-  → 返回: { pages: 12, summary: "这份合同主要内容是..." }
+  → file_pick（ユーザーが PDF を選択）→ テキスト抽出 → Gemma 4 が要約
+  → 返り値: { pages: 12, summary: "この契約書の主な内容は..." }
 ```
 
 ---
 
-> **第二阶段完成** — 7 类用户数据权限，共 **70+ 可调用 API**
+> **フェーズ2完了** — ユーザーデータ権限 7 種、**70+ の呼び出し可能 API**
 >
-> 下一阶段: 系统集成能力（剪贴板、通知、HomeKit、Shortcuts、辅助功能、网络请求等）
+> 次のフェーズ: システム統合機能（クリップボード・通知・HomeKit・Shortcuts・アクセシビリティ・ネットワークなど）

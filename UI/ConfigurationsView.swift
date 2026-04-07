@@ -3,15 +3,16 @@ import SwiftUI
 import UIKit
 #endif
 
-// MARK: - Configurations 弹窗（iOS 版，适配 Theme 暖色系）
+// MARK: - 設定画面（iOS 版、Themeに合わせたダークカラー）
 
 struct ConfigurationsView: View {
     @Bindable var engine: AgentEngine
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
-    @State private var selectedTab = 0  // 0=Model Settings, 1=System Prompt, 2=Permissions
+    // 0=モデル設定, 1=システムプロンプト, 2=ローカルモデル, 3=権限
+    @State private var selectedTab = 0
 
-    // 本地编辑状态（确认后才应用）
+    // ローカル編集状態（確定後に適用）
     @State private var selectedModelID = MLXLocalLLMService.defaultModel.id
     @State private var maxTokens: Double = 4000
     @State private var topK: Double = 64
@@ -21,20 +22,26 @@ struct ConfigurationsView: View {
     @State private var permissionStatuses: [AppPermissionKind: AppPermissionStatus] = [:]
     @State private var requestingPermission: AppPermissionKind?
 
-    private var isChineseSystem: Bool {
-        Locale.preferredLanguages.contains { $0.hasPrefix("zh") }
-    }
+    // カスタムモデル関連
+    @State private var showFilePicker = false
+    @State private var customModelPaths: [String: URL] = [:]
+    @State private var customModelNameInput = ""
+    @State private var showCustomModelAlert = false
+    @State private var pendingCustomURL: URL?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Tab 切换
-                HStack(spacing: 0) {
-                    tabButton(localized("模型设置", "Model Settings"), tag: 0)
-                    tabButton(localized("系统提示词", "System Prompt"), tag: 1)
-                    tabButton(localized("权限", "Permissions"), tag: 2)
+                // タブ切り替え
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        tabButton("モデル設定", tag: 0)
+                        tabButton("システムプロンプト", tag: 1)
+                        tabButton("ローカルモデル", tag: 2)
+                        tabButton("権限", tag: 3)
+                    }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
 
                 Rectangle().fill(Theme.border).frame(height: 1)
 
@@ -43,6 +50,8 @@ struct ConfigurationsView: View {
                         modelConfigsTab
                     } else if selectedTab == 1 {
                         systemPromptTab
+                    } else if selectedTab == 2 {
+                        localModelTab
                     } else {
                         permissionsTab
                     }
@@ -50,15 +59,13 @@ struct ConfigurationsView: View {
 
                 Rectangle().fill(Theme.border).frame(height: 1)
 
-                // 底部按钮
+                // 下部ボタン
                 HStack(spacing: 20) {
                     Spacer()
-                    Button(localized("取消", "Cancel")) { dismiss() }
+                    Button("キャンセル") { dismiss() }
                         .foregroundStyle(Theme.textSecondary)
-                    Button(localized("确定", "OK")) {
-                        if applySettings() {
-                            dismiss()
-                        }
+                    Button("OK") {
+                        if applySettings() { dismiss() }
                     }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Theme.accent)
@@ -68,7 +75,7 @@ struct ConfigurationsView: View {
                 }
                 .padding()
             }
-            .navigationTitle(localized("配置", "Configurations"))
+            .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .background(Theme.bgElevated)
@@ -81,9 +88,46 @@ struct ConfigurationsView: View {
             refreshPermissionStatuses()
         }
         #endif
+        .fileImporter(
+            isPresented: $showFilePicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    pendingCustomURL = url
+                    showCustomModelAlert = true
+                }
+            case .failure:
+                break
+            }
+        }
+        .alert("モデル名を入力", isPresented: $showCustomModelAlert) {
+            TextField("例: my-model-4bit", text: $customModelNameInput)
+            Button("追加") {
+                if let url = pendingCustomURL, !customModelNameInput.isEmpty {
+                    // セキュリティスコープ付きアクセスを開始
+                    let accessed = url.startAccessingSecurityScopedResource()
+                    Task { @MainActor in
+                        MLXLocalLLMService.registerCustomModel(name: customModelNameInput, url: url)
+                        customModelPaths = MLXLocalLLMService.customModelPaths
+                        if accessed { url.stopAccessingSecurityScopedResource() }
+                    }
+                    customModelNameInput = ""
+                    pendingCustomURL = nil
+                }
+            }
+            Button("キャンセル", role: .cancel) {
+                customModelNameInput = ""
+                pendingCustomURL = nil
+            }
+        } message: {
+            Text("このフォルダに登録する名前（モデルID）を入力してください。\n例: gemma-4-e2b-it-4bit")
+        }
     }
 
-    // MARK: - Tab 按钮
+    // MARK: - タブボタン
 
     private func tabButton(_ title: String, tag: Int) -> some View {
         Button {
@@ -93,51 +137,32 @@ struct ConfigurationsView: View {
                 Text(title)
                     .font(.subheadline.weight(selectedTab == tag ? .semibold : .regular))
                     .foregroundStyle(selectedTab == tag ? Theme.textPrimary : Theme.textTertiary)
+                    .lineLimit(1)
 
                 Rectangle()
                     .fill(selectedTab == tag ? Theme.accent : .clear)
                     .frame(height: 2)
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(minWidth: 80)
     }
 
-    // MARK: - Model Configs
+    // MARK: - モデル設定タブ
 
     private var modelConfigsTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 modelSection
-                configSlider(
-                    title: localized("最大 Token 数", "Max Tokens"),
-                    value: $maxTokens,
-                    range: 128...8192,
-                    displayValue: "\(Int(maxTokens))"
-                )
-                configSlider(
-                    title: localized("采样 TopK", "TopK"),
-                    value: $topK,
-                    range: 1...128,
-                    displayValue: "\(Int(topK))"
-                )
-                configSlider(
-                    title: localized("采样 TopP", "TopP"),
-                    value: $topP,
-                    range: 0...1,
-                    displayValue: String(format: "%.2f", topP)
-                )
-                configSlider(
-                    title: localized("温度", "Temperature"),
-                    value: $temperature,
-                    range: 0...2,
-                    displayValue: String(format: "%.2f", temperature)
-                )
+                configSlider(title: "最大トークン数", value: $maxTokens, range: 128...8192, displayValue: "\(Int(maxTokens))")
+                configSlider(title: "サンプリング TopK", value: $topK, range: 1...128, displayValue: "\(Int(topK))")
+                configSlider(title: "サンプリング TopP", value: $topP, range: 0...1, displayValue: String(format: "%.2f", topP))
+                configSlider(title: "温度", value: $temperature, range: 0...2, displayValue: String(format: "%.2f", temperature))
             }
             .padding()
         }
     }
 
-    // MARK: - System Prompt
+    // MARK: - システムプロンプトタブ
 
     private var systemPromptTab: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -152,7 +177,7 @@ struct ConfigurationsView: View {
                         .strokeBorder(Theme.border, lineWidth: 1)
                 )
 
-            Button(localized("恢复默认", "Restore Default")) {
+            Button("デフォルトに戻す") {
                 systemPrompt = engine.defaultSystemPrompt
             }
             .font(.subheadline)
@@ -160,6 +185,117 @@ struct ConfigurationsView: View {
         }
         .padding()
     }
+
+    // MARK: - ローカルモデルタブ（カスタムモデルフォルダ指定）
+
+    private var localModelTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // 説明セクション
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("ローカルモデルの指定")
+                        .font(.headline)
+                        .foregroundStyle(Theme.textPrimary)
+
+                    Text("iPhone/iPad のファイルアプリ（または PC から転送した）モデルフォルダを直接指定して使用できます。フォルダには config.json や tokenizer.json などの必要ファイルが含まれている必要があります。")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .padding(14)
+                .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
+
+                // 登録済みカスタムモデル一覧
+                if !customModelPaths.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("登録済みモデル")
+                            .font(.headline)
+                            .foregroundStyle(Theme.textPrimary)
+
+                        ForEach(Array(customModelPaths.keys.sorted()), id: \.self) { modelName in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(modelName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    if let url = customModelPaths[modelName] {
+                                        Text(url.lastPathComponent)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(Theme.textTertiary)
+                                            .lineLimit(1)
+                                    }
+                                }
+
+                                Spacer()
+
+                                Button {
+                                    Task { @MainActor in
+                                        MLXLocalLLMService.unregisterCustomModel(name: modelName)
+                                        customModelPaths = MLXLocalLLMService.customModelPaths
+                                    }
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Theme.accent)
+                                        .frame(width: 32, height: 32)
+                                        .background(Theme.accent.opacity(0.1), in: Circle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(12)
+                            .background(Theme.bg, in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+                        }
+                    }
+                    .padding(14)
+                    .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
+                }
+
+                // フォルダ追加ボタン
+                Button {
+                    showFilePicker = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("モデルフォルダを選択して追加")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(Theme.bg)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+
+                // 使い方メモ
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("使い方")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("1. PCからiPhone/iPadへファイルアプリ経由でモデルフォルダを転送する")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("2. 「モデルフォルダを選択して追加」をタップし、フォルダを選択")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("3. モデル名（ID）を入力して登録（例: gemma-4-e2b-it-4bit）")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("4. モデル設定タブでそのIDのモデルを選択してOKを押す")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .padding(14)
+                .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - 権限タブ
 
     private var permissionsTab: some View {
         ScrollView {
@@ -170,16 +306,16 @@ struct ConfigurationsView: View {
         }
     }
 
-    // MARK: - 配置 Slider
+    // MARK: - スライダー
 
     private var modelSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(localized("模型", "Model"))
+            Text("モデル")
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
 
             Text(engine.llm.isLoaded
-                 ? localized("当前已加载：", "Loaded: ") + engine.llm.modelDisplayName
+                 ? "読み込み済み：" + engine.llm.modelDisplayName
                  : engine.llm.statusMessage)
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
@@ -232,9 +368,7 @@ struct ConfigurationsView: View {
                             )
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 12))
-                    .onTapGesture {
-                        selectedModelID = model.id
-                    }
+                    .onTapGesture { selectedModelID = model.id }
                 }
             }
 
@@ -244,15 +378,12 @@ struct ConfigurationsView: View {
         }
         .padding(14)
         .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Theme.border, lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     private var permissionsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(localized("权限", "Permissions"))
+            Text("権限")
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
 
@@ -262,10 +393,7 @@ struct ConfigurationsView: View {
         }
         .padding(14)
         .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Theme.border, lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     private func permissionRow(for kind: AppPermissionKind) -> some View {
@@ -291,8 +419,7 @@ struct ConfigurationsView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(
-                                (status.isGranted ? Theme.accentGreen : Theme.accent)
-                                    .opacity(0.14),
+                                (status.isGranted ? Theme.accentGreen : Theme.accent).opacity(0.14),
                                 in: Capsule()
                             )
                     }
@@ -309,9 +436,7 @@ struct ConfigurationsView: View {
 
             HStack(spacing: 10) {
                 if !status.isGranted {
-                    Button(requestingPermission == kind
-                           ? localized("请求中...", "Requesting...")
-                           : localized("请求权限", "Request Access")) {
+                    Button(requestingPermission == kind ? "リクエスト中..." : "権限をリクエスト") {
                         requestPermission(kind)
                     }
                     .disabled(requestingPermission != nil)
@@ -322,14 +447,12 @@ struct ConfigurationsView: View {
                     .background(Theme.accent.opacity(0.15), in: Capsule())
                 }
 
-                Button(localized("去设置", "Open Settings")) {
-                    openAppSettings()
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Theme.bg, in: Capsule())
+                Button("設定を開く") { openAppSettings() }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Theme.bg, in: Capsule())
             }
         }
         .padding(.vertical, 4)
@@ -347,8 +470,7 @@ struct ConfigurationsView: View {
                 .foregroundStyle(Theme.textSecondary)
 
             HStack(spacing: 12) {
-                Slider(value: value, in: range)
-                    .tint(Theme.accent)
+                Slider(value: value, in: range).tint(Theme.accent)
 
                 Text(displayValue)
                     .font(.body.monospaced())
@@ -365,7 +487,7 @@ struct ConfigurationsView: View {
     private func modelStateControl(for model: BundledModelOption, state: ModelInstallState) -> some View {
         switch state {
         case .notInstalled:
-            Button(localized("下载", "Download")) {
+            Button("ダウンロード") {
                 selectedModelID = model.id
                 Task {
                     await engine.llm.downloadModel(id: model.id)
@@ -382,20 +504,23 @@ struct ConfigurationsView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(Theme.accent.opacity(0.15), in: Capsule())
+
         case .checkingSource:
-            modelBadge(localized("检查中", "Checking"))
+            modelBadge("確認中")
+
         case .downloading(let completedFiles, let totalFiles, _):
-            modelBadge(localized("下载中 \(completedFiles)/\(totalFiles)", "Downloading \(completedFiles)/\(totalFiles)"))
+            modelBadge("ダウンロード中 \(completedFiles)/\(totalFiles)")
+
         case .downloaded:
-            modelBadge(localized("已下载", "Downloaded"), color: Theme.accentGreen)
+            modelBadge("ダウンロード済み", color: Theme.accentGreen)
+
         case .bundled:
-            modelBadge(localized("内置", "Bundled"), color: Theme.accentGreen)
+            modelBadge("バンドル済み", color: Theme.accentGreen)
+
         case .failed:
-            Button(localized("重试", "Retry")) {
+            Button("再試行") {
                 selectedModelID = model.id
-                Task {
-                    await engine.llm.downloadModel(id: model.id)
-                }
+                Task { await engine.llm.downloadModel(id: model.id) }
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(Theme.accent)
@@ -416,94 +541,68 @@ struct ConfigurationsView: View {
 
     private func modelStateDetail(_ state: ModelInstallState) -> String? {
         switch state {
-        case .notInstalled:
-            return localized("未安装", "Not Installed")
-        case .checkingSource:
-            return localized("正在检查模型下载源。", "Checking the model download source.")
-        case .downloading(_, _, let currentFile):
-            return localized("正在下载：", "Downloading: ") + currentFile
-        case .downloaded:
-            return localized("已下载到手机本地，可直接加载。", "Downloaded on device and ready to load.")
-        case .bundled:
-            return localized("模型已随 App 内置。", "This model is bundled inside the app.")
-        case .failed(let message):
-            return message
+        case .notInstalled:    return "未インストール"
+        case .checkingSource:  return "ダウンロード元を確認しています。"
+        case .downloading(_, _, let currentFile): return "ダウンロード中：\(currentFile)"
+        case .downloaded:      return "デバイスにダウンロード済みで、すぐに読み込めます。"
+        case .bundled:         return "このモデルはアプリに同梱されています。"
+        case .failed(let message): return message
         }
     }
 
     private var modelFooterText: String {
         guard let selectedModel = engine.availableModels.first(where: { $0.id == selectedModelID }) else {
-            return localized("点右侧按钮下载模型后再点击确定。", "Download a model first, then tap OK.")
+            return "モデルをダウンロードしてからOKをタップしてください。"
         }
 
         if !engine.llm.isModelAvailable(selectedModel) {
-            return localized("先下载选中的模型，再点击确定加载。", "Download the selected model first, then tap OK to load it.")
+            return "選択したモデルをダウンロードしてからOKをタップして読み込んでください。"
         }
 
         if selectedModelID == engine.llm.selectedModelID,
            engine.llm.loadedModelID == selectedModelID,
            engine.llm.isLoaded {
-            return localized("点击确定会保留当前模型。", "Tap OK to keep the current model.")
+            return "OKをタップすると現在のモデルを維持します。"
         }
 
-        return localized("点击确定后会卸载当前模型并重新加载新模型。", "Tap OK to unload the current model and reload the new one.")
+        return "OKをタップすると現在のモデルをアンロードして新しいモデルを読み込みます。"
     }
 
-    // MARK: - 加载 / 应用
-
-    private func localized(_ zh: String, _ en: String) -> String {
-        isChineseSystem ? zh : en
-    }
+    // MARK: - 設定の読み込み / 適用
 
     private func permissionTitle(_ kind: AppPermissionKind) -> String {
         switch kind {
-        case .microphone:
-            return localized("麦克风", "Microphone")
-        case .calendar:
-            return localized("日历", "Calendar")
-        case .reminders:
-            return localized("提醒事项", "Reminders")
-        case .contacts:
-            return localized("通讯录", "Contacts")
+        case .microphone: return "マイク"
+        case .calendar:   return "カレンダー"
+        case .reminders:  return "リマインダー"
+        case .contacts:   return "連絡先"
         }
     }
 
     private func permissionDescription(_ kind: AppPermissionKind) -> String {
         switch kind {
-        case .microphone:
-            return localized("允许录音并采集实时音频输入", "Allow recording and capturing realtime audio input")
-        case .calendar:
-            return localized("允许创建和写入日历事项", "Allow creating and writing calendar events")
-        case .reminders:
-            return localized("允许创建提醒和待办", "Allow creating reminders and tasks")
-        case .contacts:
-            return localized("允许保存和更新联系人", "Allow saving and updating contacts")
+        case .microphone: return "録音とリアルタイム音声入力を許可します"
+        case .calendar:   return "カレンダーイベントの作成と書き込みを許可します"
+        case .reminders:  return "リマインダーと ToDo の作成を許可します"
+        case .contacts:   return "連絡先の保存と更新を許可します"
         }
     }
 
     private func permissionStatusLabel(_ status: AppPermissionStatus) -> String {
         switch status {
-        case .notDetermined:
-            return localized("未请求", "Not Requested")
-        case .denied:
-            return localized("已拒绝", "Denied")
-        case .restricted:
-            return localized("受限制", "Restricted")
-        case .granted:
-            return localized("已授权", "Granted")
+        case .notDetermined: return "未リクエスト"
+        case .denied:        return "拒否済み"
+        case .restricted:    return "制限あり"
+        case .granted:       return "許可済み"
         }
     }
 
     private func permissionStatusDetail(_ status: AppPermissionStatus) -> String {
         switch status {
-        case .notDetermined:
-            return localized("首次使用时会弹出系统授权框", "The system permission dialog will appear on first use")
-        case .denied:
-            return localized("请到系统设置里手动开启权限", "Please enable this permission manually in Settings")
-        case .restricted:
-            return localized("当前设备限制了这项权限", "This permission is restricted on the current device")
-        case .granted:
-            return localized("可以直接执行相关 Skill", "Related skills can run directly")
+        case .notDetermined: return "初回使用時にシステム許可ダイアログが表示されます"
+        case .denied:        return "設定アプリから手動で許可を有効にしてください"
+        case .restricted:    return "このデバイスでは権限が制限されています"
+        case .granted:       return "関連スキルを直接実行できます"
         }
     }
 
@@ -516,6 +615,9 @@ struct ConfigurationsView: View {
         temperature = engine.config.temperature
         systemPrompt = engine.config.systemPrompt
         refreshPermissionStatuses()
+        Task { @MainActor in
+            customModelPaths = MLXLocalLLMService.customModelPaths
+        }
     }
 
     private func applySettings() -> Bool {
@@ -527,15 +629,13 @@ struct ConfigurationsView: View {
         engine.config.temperature = temperature
         engine.config.systemPrompt = systemPrompt
 
-        // 同步采样参数到 LLM（下次生成立即生效）
+        // サンプリングパラメータを LLM に同期（次の生成から即反映）
         engine.applySamplingConfig()
 
         guard let selectedModel = engine.availableModels.first(where: { $0.id == selectedModelID }),
               engine.llm.isModelAvailable(selectedModel) else {
             if let missingModel = engine.availableModels.first(where: { $0.id == selectedModelID }) {
-                engine.llm.statusMessage = localized("请先在配置中下载 ", "Please download ")
-                    + missingModel.displayName
-                    + localized(" 模型", " first")
+                engine.llm.statusMessage = "設定から「\(missingModel.displayName)」モデルをダウンロードしてください"
             }
             return false
         }
@@ -573,9 +673,7 @@ struct ConfigurationsView: View {
 
 private extension ModelInstallState {
     var isFailure: Bool {
-        if case .failed = self {
-            return true
-        }
+        if case .failed = self { return true }
         return false
     }
 }

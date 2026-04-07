@@ -1,160 +1,160 @@
-# 第三部分：系统集成能力
+# 第3部：システム統合能力
 
 ---
 
-## 14. 📋 剪贴板 — UIPasteboard
+## 14. 📋 クリップボード — UIPasteboard
 
-### 权限配置
+### 権限設定
 ```
-无需 Info.plist 声明
-iOS 14+: 读取时系统顶部显示通知条
-iOS 16+: 跨 App 粘贴时需用户确认弹窗
+Info.plist への宣言不要
+iOS 14+: 読み取り時、画面上部に通知バナーを表示
+iOS 16+: アプリをまたいだ貼り付け時、ユーザー確認ダイアログが必要
 ```
 
-### 可调用 API
+### 利用可能な API
 
-| API | 框架 | 能力 |
-|-----|------|------|
-| `UIPasteboard.general.string` | UIKit | 读取/写入剪贴板文本 |
-| `UIPasteboard.general.image` | UIKit | 读取/写入剪贴板图片 |
-| `UIPasteboard.general.url` | UIKit | 读取剪贴板 URL |
-| `UIPasteboard.general.hasStrings` | UIKit | 检查有无文本（不触发通知）|
+| API | フレームワーク | 機能 |
+|-----|--------------|------|
+| `UIPasteboard.general.string` | UIKit | クリップボードのテキストを読み取り/書き込み |
+| `UIPasteboard.general.image` | UIKit | クリップボードの画像を読み取り/書き込み |
+| `UIPasteboard.general.url` | UIKit | クリップボードの URL を読み取り |
+| `UIPasteboard.general.hasStrings` | UIKit | テキストの有無を確認（通知を発火しない）|
 
-### Agent Skills
+### Agent スキル
 
 ```
-skill: clipboard_read   → 读取并分析剪贴板内容
-skill: clipboard_write  → 写入翻译/格式化结果到剪贴板
-skill: clipboard_analyze → 读取 → Gemma 4 自动判断类型(文本/URL/图片) → 总结/翻译
+skill: clipboard_read    → クリップボードの内容を読み取り・分析
+skill: clipboard_write   → 翻訳・整形した結果をクリップボードに書き込み
+skill: clipboard_analyze → 読み取り → Gemma 4 が種別（テキスト/URL/画像）を自動判定 → 要約・翻訳
 ```
 
 ---
 
 ## 15. 🔔 通知 — UserNotifications
 
-### 权限配置
+### 権限設定
 ```
-需 UNUserNotificationCenter.requestAuthorization() 授权
+UNUserNotificationCenter.requestAuthorization() による認可が必要
 ```
 
-### 可调用 API
+### 利用可能な API
 
-| API | 框架 | 能力 |
-|-----|------|------|
-| `UNMutableNotificationContent` | UserNotifications | 通知内容（标题/正文/声音/附件）|
-| `UNTimeIntervalNotificationTrigger` | UserNotifications | 延时触发 |
-| `UNCalendarNotificationTrigger` | UserNotifications | 日历时间触发 |
-| `UNLocationNotificationTrigger` | UserNotifications | 地点触发 |
-| `UNNotificationAction` / `UNNotificationCategory` | UserNotifications | 交互按钮 |
-| `UNNotificationAttachment` | UserNotifications | 富媒体附件 |
+| API | フレームワーク | 機能 |
+|-----|--------------|------|
+| `UNMutableNotificationContent` | UserNotifications | 通知コンテンツ（タイトル・本文・サウンド・添付）|
+| `UNTimeIntervalNotificationTrigger` | UserNotifications | 一定時間後にトリガー |
+| `UNCalendarNotificationTrigger` | UserNotifications | カレンダー日時でトリガー |
+| `UNLocationNotificationTrigger` | UserNotifications | 場所でトリガー |
+| `UNNotificationAction` / `UNNotificationCategory` | UserNotifications | 操作ボタン付き通知 |
+| `UNNotificationAttachment` | UserNotifications | リッチメディア添付 |
 
-### Agent Skills
+### Agent スキル
 
 ```
-skill: notification_send     → 定时/延时推送本地通知
-skill: notification_schedule → 重复通知（每天吃药提醒）
-skill: notification_location → 到达/离开某地触发通知
-skill: notification_interactive → 带操作按钮的通知
+skill: notification_send        → 時刻指定・遅延ローカル通知を送信
+skill: notification_schedule    → 繰り返し通知（毎日の服薬リマインダーなど）
+skill: notification_location    → 特定の場所に到着/離れたときに通知
+skill: notification_interactive → 操作ボタン付き通知
 ```
 
 ---
 
-## 16. 🏠 智能家居 — HomeKit
+## 16. 🏠 スマートホーム — HomeKit
 
-### 权限配置
+### 権限設定
 ```
 Info.plist: NSHomeKitUsageDescription
 Entitlement: com.apple.developer.homekit
 ```
 
-### 可调用 API
+### 利用可能な API
 
-| API | 框架 | 能力 |
-|-----|------|------|
-| `HMHomeManager` | HomeKit | 获取所有家庭 |
-| `HMAccessory` | HomeKit | 配件设备（灯/空调/锁等）|
-| `HMCharacteristic.writeValue()` | HomeKit | 控制设备 |
-| `HMCharacteristic.readValue()` | HomeKit | 读取设备状态 |
-| `HMActionSet` | HomeKit | 场景执行 |
-| `HMEventTrigger` / `HMTimerTrigger` | HomeKit | 自动化 |
+| API | フレームワーク | 機能 |
+|-----|--------------|------|
+| `HMHomeManager` | HomeKit | すべてのホームを取得 |
+| `HMAccessory` | HomeKit | アクセサリデバイス（照明・エアコン・ロックなど）|
+| `HMCharacteristic.writeValue()` | HomeKit | デバイスを制御 |
+| `HMCharacteristic.readValue()` | HomeKit | デバイスの状態を読み取り |
+| `HMActionSet` | HomeKit | シーンを実行 |
+| `HMEventTrigger` / `HMTimerTrigger` | HomeKit | オートメーション |
 
-### Agent Skills
+### Agent スキル
 
 ```
-skill: home_list_devices  → 列出所有房间和设备
-skill: home_control       → 控制设备 (开灯/调温/关窗帘)
-skill: home_read_status   → 读取设备状态
-skill: home_scene         → 执行场景 ("回家模式")
-skill: home_automation    → 创建自动化 (日落开灯)
-skill: home_sensor_read   → 读取温湿度传感器
+skill: home_list_devices  → すべての部屋とデバイスを一覧表示
+skill: home_control       → デバイスを制御（照明オン・温度調整・カーテン閉めなど）
+skill: home_read_status   → デバイスの状態を読み取り
+skill: home_scene         → シーンを実行（「帰宅モード」など）
+skill: home_automation    → オートメーションを作成（日没に照明を点灯など）
+skill: home_sensor_read   → 温湿度センサーの値を読み取り
 ```
 
 ---
 
-## 17. ⌨️ Shortcuts — App Intents
+## 17. ⌨️ ショートカット — App Intents
 
-### 权限: 无需特殊权限
+### 権限: 特別な権限不要
 
-| API | 框架 | 能力 |
-|-----|------|------|
-| `AppIntent` protocol | App Intents | 定义可被 Siri/Shortcuts 调用的操作 |
-| `AppShortcutsProvider` | App Intents | 自动注册快捷指令 |
+| API | フレームワーク | 機能 |
+|-----|--------------|------|
+| `AppIntent` プロトコル | App Intents | Siri / ショートカットから呼び出せる操作を定義 |
+| `AppShortcutsProvider` | App Intents | ショートカットを自動登録 |
 
-Agent 的每个 Skill 都可注册为 App Intent → Siri 可直接调用。
+Agent の各スキルを App Intent として登録することで、Siri から直接呼び出せるようになります。
 
 ---
 
-## 18. 🌐 网络请求 — URLSession + Network
+## 18. 🌐 ネットワーク通信 — URLSession + Network
 
-### 权限: 无需特殊权限（局域网需 NSLocalNetworkUsageDescription）
+### 権限: 不要（ローカルネットワークは NSLocalNetworkUsageDescription が必要）
 
-| API | 框架 | 能力 |
-|-----|------|------|
-| `URLSession.shared.data(from:)` | Foundation | HTTP 请求 |
-| `URLSession.shared.download(from:)` | Foundation | 下载文件 |
+| API | フレームワーク | 機能 |
+|-----|--------------|------|
+| `URLSession.shared.data(from:)` | Foundation | HTTP リクエスト |
+| `URLSession.shared.download(from:)` | Foundation | ファイルのダウンロード |
 | `URLSession.shared.webSocketTask()` | Foundation | WebSocket |
-| `NWPathMonitor` | Network | 网络状态监听 |
-| `NWBrowser` | Network | 局域网服务发现 |
-| `NEHotspotConfiguration` | NetworkExtension | 程序化连接 WiFi |
+| `NWPathMonitor` | Network | ネットワーク状態の監視 |
+| `NWBrowser` | Network | ローカルネットワークのサービス検出 |
+| `NEHotspotConfiguration` | NetworkExtension | プログラムによる Wi-Fi 接続 |
 
-### Agent Skills
+### Agent スキル
 ```
-skill: web_fetch      → HTTP 请求
-skill: web_search     → 搜索 + Gemma 4 总结
-skill: api_call       → 调用 REST API
-skill: network_status → 网络状态查询
-skill: download_file  → 下载文件到沙箱
+skill: web_fetch      → HTTP リクエスト
+skill: web_search     → 検索 + Gemma 4 による要約
+skill: api_call       → REST API の呼び出し
+skill: network_status → ネットワーク状態の確認
+skill: download_file  → ファイルをサンドボックスにダウンロード
 ```
 
 ---
 
 ## 19. 🔐 Face ID — LocalAuthentication
 
-### 权限: NSFaceIDUsageDescription
+### 権限: NSFaceIDUsageDescription
 
-| API | 能力 |
+| API | 機能 |
 |-----|------|
-| `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` | 生物识别 |
-| `LAContext.biometryType` | Face ID / Touch ID 检测 |
+| `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` | 生体認証 |
+| `LAContext.biometryType` | Face ID / Touch ID の検出 |
 
-### Agent Skill
+### Agent スキル
 ```
-skill: auth_biometric → 敏感操作前要求人脸/指纹确认
+skill: auth_biometric → 重要な操作の前に顔認証・指紋認証を要求
 ```
 
 ---
 
-## 20. 💬 邮件/短信 — MessageUI
+## 20. 💬 メール/SMS — MessageUI
 
-### 权限: 无需 — 系统弹出编辑界面，用户手动确认发送
+### 権限: 不要 — システムが編集画面を表示し、ユーザーが手動で送信を確認
 
-| API | 能力 |
+| API | 機能 |
 |-----|------|
-| `MFMailComposeViewController` | 编辑发送邮件（支持附件）|
-| `MFMessageComposeViewController` | 编辑发送短信/iMessage |
+| `MFMailComposeViewController` | メールを編集して送信（添付ファイル対応）|
+| `MFMessageComposeViewController` | SMS / iMessage を編集して送信 |
 
-### Agent Skills
+### Agent スキル
 ```
-skill: email_compose → 预填邮件内容，用户确认发送
-skill: sms_compose   → 预填短信内容，用户确认发送
+skill: email_compose → メールの内容を事前入力し、ユーザーが確認して送信
+skill: sms_compose   → SMS の内容を事前入力し、ユーザーが確認して送信
 ```

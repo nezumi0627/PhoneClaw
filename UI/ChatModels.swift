@@ -1,16 +1,16 @@
 import SwiftUI
 
-// MARK: - 显示模型（跨平台共享）
+// MARK: - 表示モデル（クロスプラットフォーム共有）
 
-/// 单个 Skill 卡片数据
+/// 単一 Skill カードのデータ
 struct SkillCard: Identifiable, Equatable {
     let id: UUID
     var skillName: String
     var skillStatus: String?   // "identified", "loaded", "executing", "done"
-    var toolName: String?      // 正在执行的具体 Tool 名（如 "device-info"）
+    var toolName: String?      // 実行中の具体的なツール名（例: "device-info"）
 }
 
-/// AI 回复块：多张 skill 卡片 + 思考动画 + 回复文本
+/// AI 回答ブロック：複数の Skill カード + 思考アニメーション + 回答テキスト
 struct ResponseBlock: Identifiable, Equatable {
     let id: UUID
     var skills: [SkillCard] = []
@@ -19,7 +19,7 @@ struct ResponseBlock: Identifiable, Equatable {
     var isThinking: Bool
 }
 
-/// 聊天列表的统一显示项
+/// チャットリストの統一表示項目
 enum DisplayItem: Identifiable {
     case user(ChatMessage)
     case response(ResponseBlock)
@@ -32,13 +32,14 @@ enum DisplayItem: Identifiable {
     }
 }
 
-// MARK: - Messages → DisplayItems 转换（跨平台共享）
+// MARK: - メッセージ → 表示項目変換（クロスプラットフォーム共有）
 
-/// 用于纯思考占位的稳定 ID
+/// 思考プレースホルダー用の安定した ID
 private let thinkingPlaceholderID = UUID()
 private let thinkingOpenMarker = "[[PHONECLAW_THINK]]"
 private let thinkingCloseMarker = "[[/PHONECLAW_THINK]]"
 
+/// テキストから思考チャンネルと回答テキストを分離
 private func splitThinkingAndResponse(from text: String) -> (thinking: String?, response: String?) {
     guard !text.isEmpty else { return (nil, nil) }
 
@@ -90,7 +91,7 @@ func buildDisplayItems(from messages: [ChatMessage], isProcessing: Bool) -> [Dis
                 if block == nil { block = ResponseBlock(id: msg.id, isThinking: false) }
 
                 let content = msg.content
-                // 查找已有的同名卡片 → 更新状态；否则新建
+                // 同名カードが既にある場合はステータスを更新、なければ新規作成
                 if let idx = block?.skills.firstIndex(where: { $0.skillName == name }) {
                     if content.hasPrefix("executing:") {
                         block?.skills[idx].skillStatus = "executing"

@@ -1,27 +1,28 @@
 import Foundation
 
-// MARK: - Prompt 构造器（Gemma 4 对话模板 + Function Calling）
+// MARK: - プロンプト構築器（Gemma 4 対話テンプレート + Function Calling）
 //
-// Gemma 4 使用新 token 格式：
+// Gemma 4 は新しいトークン形式を使用：
 //   <|turn>system\n ... <turn|>
 //   <|turn>user\n ... <turn|>
 //   <|turn>model\n ... <turn|>
 
 struct PromptBuilder {
 
-    static let defaultSystemPrompt = "你是 PhoneClaw，一个运行在本地的私人 AI 助手。你完全运行在设备上，不联网。"
+    static let defaultSystemPrompt = "あなたは PhoneClaw です。ローカルデバイス上で動作するプライベート AI アシスタントです。完全にオフラインで動作し、インターネットに接続しません。"
     private static let thinkingOpenMarker = "[[PHONECLAW_THINK]]"
     private static let thinkingCloseMarker = "[[/PHONECLAW_THINK]]"
-    private static let thinkingLanguageInstruction = "如果启用了思考模式，思考通道和最终回答都必须使用简体中文，不要使用英文。"
+    private static let thinkingLanguageInstruction = "思考モードが有効な場合、思考チャンネルと最終回答は必ず日本語で行ってください。英語は使用しないでください。"
 
+    /// マルチモーダル専用システムプロンプト（画像・音声対応）
     static func multimodalSystemPrompt(hasImages: Bool, hasAudio: Bool, enableThinking: Bool = false) -> String {
         let base: String
         if hasAudio && !hasImages {
-            base = "你是 PhoneClaw，一个运行在本地设备上的音频助手。请把用户提供的音频视为需要分析的素材，而不是用户此刻正在对你说的话。请根据音频和文本任务直接作答，不要擅自改写用户任务，也不要额外追加不存在的意图。听不清或不确定时请明确说明，不要编造。如果用户是在询问音频里说了什么，或明确要求转写、识别、逐字写出，请直接给出识别结果，不要复述用户问题，不要寒暄。如果用户明确要求逐字转写，尽量保留原话，不要改写、总结、润色，也不要把音频内容当成需要你回应的对话。用简体中文回答。这是纯音频问答，不要调用任何工具或技能。"
+            base = "あなたは PhoneClaw です。ローカルデバイス上で動作する音声アシスタントです。ユーザーが提供した音声を分析素材として扱い、ユーザーが今あなたに話しかけているものとして扱わないでください。音声とテキストのタスクに基づいて直接回答し、ユーザーの意図を勝手に書き換えたり、存在しない意図を追加したりしないでください。聞き取れない、または不確かな場合は明確に説明し、内容を捏造しないでください。音声の内容を尋ねている場合、または文字起こし・識別を明示的に求めている場合は、認識結果を直接提供し、ユーザーの質問を繰り返したり、挨拶を付け加えたりしないでください。逐語的な文字起こしを明示的に求めている場合は、可能な限り原文を保持し、書き換え・要約・修飾はしないでください。また、音声内容をあなたへの会話として扱わないでください。日本語で回答してください。これは純粋な音声問答です。ツールや能力を呼び出さないでください。"
         } else if hasImages && hasAudio {
-            base = "你是 PhoneClaw，一个运行在本地设备上的多模态助手。请把用户提供的音频视为需要分析的素材，而不是用户此刻正在对你说的话。请根据用户提供的图片、音频和文本直接作答，不要擅自改写用户任务，也不要额外追加不存在的意图。看不清、听不清或不确定时请直接说明，不要编造。如果用户是在询问音频里说了什么，或明确要求转写、识别、逐字写出，请直接给出识别结果，不要复述用户问题，不要寒暄。如果用户明确要求逐字转写，尽量保留原话，不要改写、总结、润色，也不要把音频内容当成需要你回应的对话。用简体中文回答。这是纯多模态问答，不要调用任何工具或技能。"
+            base = "あなたは PhoneClaw です。ローカルデバイス上で動作するマルチモーダルアシスタントです。ユーザーが提供した音声を分析素材として扱い、ユーザーが今あなたに話しかけているものとして扱わないでください。ユーザーが提供した画像・音声・テキストに基づいて直接回答し、ユーザーの意図を勝手に書き換えたり、存在しない意図を追加したりしないでください。見えない、聞き取れない、または不確かな場合は直接説明し、内容を捏造しないでください。音声の内容を尋ねている場合、または文字起こし・識別を明示的に求めている場合は、認識結果を直接提供し、ユーザーの質問を繰り返したり、挨拶を付け加えたりしないでください。逐語的な文字起こしを明示的に求めている場合は、可能な限り原文を保持し、書き換え・要約・修飾はしないでください。また、音声内容をあなたへの会話として扱わないでください。日本語で回答してください。これは純粋なマルチモーダル問答です。ツールや能力を呼び出さないでください。"
         } else {
-            base = "你是 PhoneClaw，一个运行在本地设备上的视觉助手。请仅根据图片和用户问题直接作答，并严格遵守以下规则：1. 默认先直接给结论，控制在1到2句内；2. 除非用户明确要求详细说明，否则禁止分点、禁止长篇分析、禁止列举多种可能性；3. 不要写“根据您提供的图片”“从画面中可以看到”等铺垫；4. 如果看不清或不确定，只需简短说明“看不清，像……”，不要编造。优先识别图中的主要物体、用途、场景和可读文本。用简体中文回答。这是纯图文问答，不要调用任何工具或技能。"
+            base = "あなたは PhoneClaw です。ローカルデバイス上で動作するビジョンアシスタントです。画像とユーザーの質問のみに基づいて直接回答し、以下のルールを厳守してください：1. デフォルトでは先に結論を述べ、1〜2文に収める；2. 詳しい説明をユーザーが明示的に求めない限り、箇条書き・長文分析・複数の可能性の列挙は禁止；3.「ご提供の画像によると」「画面から見えるのは」などの前置きは書かない；4. 見えない、または不確かな場合は「見えにくいですが、〜のようです」と簡潔に説明し、内容を捏造しない。主な物体・用途・シーン・読み取れるテキストの識別を優先してください。日本語で回答してください。これは純粋な画像問答です。ツールや能力を呼び出さないでください。"
         }
 
         return enableThinking ? base + "\n" + thinkingLanguageInstruction : base
@@ -54,6 +55,7 @@ struct PromptBuilder {
         return head + "\n\n" + trimmedExtra + "\n<turn|>\n"
     }
 
+    /// アシスタント履歴コンテンツのサニタイズ（思考マーカーを除去）
     private static func sanitizedAssistantHistoryContent(_ text: String) -> String {
         var result = text
 
@@ -77,10 +79,10 @@ struct PromptBuilder {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let base = (firstParagraph?.isEmpty == false ? firstParagraph! : defaultSystemPrompt)
-        return base + "\n\n当前这轮只是普通文字对话，不需要调用任何设备技能或工具。请直接回答用户，避免提到 Skill、load_skill、tool_call 或设备操作流程。用简体中文回答，默认简洁。"
+        return base + "\n\nこのターンは通常のテキスト会話です。デバイス能力やツールを呼び出す必要はありません。ユーザーに直接回答し、Skill・load_skill・tool_call・デバイス操作フローへの言及は避けてください。日本語で簡潔に回答してください。"
     }
 
-    /// 构造完整 Prompt（包含工具定义 + 对话历史）
+    /// 完全プロンプトを構築（ツール定義 + 対話履歴含む）
     static func build(
         userMessage: String,
         currentImageCount: Int = 0,
@@ -88,7 +90,7 @@ struct PromptBuilder {
         history: [ChatMessage] = [],
         systemPrompt: String? = nil,
         enableThinking: Bool = false,
-        historyDepth: Int = 4          // 动态传入，根据当前内存 headroom 估算
+        historyDepth: Int = 4          // llm.safeHistoryDepth から動的に渡す
     ) -> String {
         let isMultimodalTurn = currentImageCount > 0
         var prompt = "<|turn>system\n"
@@ -96,13 +98,13 @@ struct PromptBuilder {
             prompt += "<|think|>"
         }
 
-        // ★ 使用自定义 system prompt（如果有），否则用默认
+        // カスタムシステムプロンプトがあれば優先、なければデフォルトを使用
         let basePrompt =
             isMultimodalTurn
             ? multimodalSystemPrompt(hasImages: currentImageCount > 0, hasAudio: false, enableThinking: enableThinking)
             : (systemPrompt ?? defaultSystemPrompt)
 
-        // 构建 Skill 概要列表（只列名称 + 一句话描述，不暴露 Tool）
+        // Skill 概要リストを構築（名前と一文説明のみ、ツールは非公開）
         var skillListText = ""
         for skill in tools {
             skillListText += "- **\(skill.name)**: \(skill.description)\n"
@@ -111,14 +113,14 @@ struct PromptBuilder {
         if isMultimodalTurn {
             prompt += basePrompt
         } else if basePrompt.contains("___SKILLS___") {
-            // 处理 ___SKILLS___ 占位符
+            // ___SKILLS___ プレースホルダーを置換
             prompt += basePrompt.replacingOccurrences(of: "___SKILLS___", with: skillListText)
         } else {
-            // SYSPROMPT.md 不含 ___SKILLS___ 时的兜底：只追加技能列表，不追加指令。
-            // 调用规则已在 SYSPROMPT.md 里定义，不在这里硬编。
+            // SYSPROMPT.md に ___SKILLS___ がない場合のフォールバック：スキルリストを追記
+            // 呼び出しルールは SYSPROMPT.md で定義済みなので、ここでハードコードしない
             prompt += basePrompt
             if !tools.isEmpty {
-                prompt += "\n\n你拥有以下能力（Skill）：\n\n" + skillListText
+                prompt += "\n\nあなたは以下の能力（Skill）を持っています：\n\n" + skillListText
             }
         }
 
@@ -128,20 +130,19 @@ struct PromptBuilder {
 
         prompt += "\n<turn|>\n"
 
-        // 对话历史（动态深度，由 llm.safeHistoryDepth 控制）
-        // E2B 内存限制：jetsam 上限 6144 MB，模型占用 4220 MB，仅剩 ~1.9 GB。
-        // suffix(12) 在工具调用后会积累 6+ 条消息（tool_call + result × N），
-        // 使 prefill 超过 1000 tokens，导致第二次提问时 OOM。
-        // suffix(4) 保留最近 2 轮（≈200 tokens history），足够连贯对话。
+        // 対話履歴（動的深度、llm.safeHistoryDepth で制御）
+        // メモリ制限考慮：suffix(12) はツール呼び出し後に 6+ メッセージが蓄積し
+        // プリフィルが 1000 トークンを超えて OOM になる。
+        // suffix(4) は直近 2 ターン（約 200 トークン）を保持し、会話の連続性を維持。
         let recentHistory = history.suffix(historyDepth)
         for msg in recentHistory {
-            // ★ 跳过最后一条 user 消息（等下面单独加）
+            // 最後の user メッセージはスキップ（下で個別に追加）
             if msg.role == .user && msg.id == recentHistory.last?.id { continue }
             switch msg.role {
             case .user:
-                // Current multimodal support is image-first and single-image-per-turn.
-                // We keep historical image metadata in the UI, but only materialize
-                // image placeholders for the current turn and its tool follow-ups.
+                // マルチモーダル対応は画像優先・単一ターン単一画像。
+                // 過去ターンの画像メタデータは UI に保持するが、
+                // プレースホルダーは現在ターンとそのフォローアップのみで展開する。
                 prompt += "<|turn>user\n\(msg.content)<turn|>\n"
             case .assistant:
                 let assistantContent = sanitizedAssistantHistoryContent(msg.content)
@@ -152,11 +153,11 @@ struct PromptBuilder {
                 }
             case .skillResult:
                 let skillLabel = msg.skillName ?? "tool"
-                prompt += "<|turn>user\n工具 \(skillLabel) 的执行结果：\(msg.content)<turn|>\n"
+                prompt += "<|turn>user\nツール \(skillLabel) の実行結果：\(msg.content)<turn|>\n"
             }
         }
 
-        // 当前用户消息
+        // 現在のユーザーメッセージ
         prompt += "<|turn>user\n\(userMessage)\(imagePromptSuffix(count: currentImageCount))<turn|>\n"
         prompt += "<|turn>model\n"
 
@@ -200,9 +201,9 @@ struct PromptBuilder {
         return prompt
     }
 
-    /// `load_skill` 之后重新推理：
-    /// 直接把已加载的 Skill 指令注入 system turn，再重新回答原问题。
-    /// 这样比“把 tool_call + skill body + retry 指令继续拼接”更稳定，也更省 prefill。
+    /// `load_skill` 後に再推論：
+    /// 読み込み済みの Skill 指示をシステムターンに注入して元の質問に再回答。
+    /// tool_call + skill body + retry 指示を継続して追加するより安定し、プリフィルも少ない。
     static func buildLoadedSkillPrompt(
         originalPrompt: String,
         userQuestion: String,
@@ -214,11 +215,11 @@ struct PromptBuilder {
         let systemInstructions = injectIntoSystemBlock(
             systemBlock,
             extraInstructions: """
-            对于当前这一个用户问题，你已经加载了所需的 Skill 指令。
-            不要再次调用 `load_skill`。
-            如果需要执行设备内操作，直接调用对应工具；如果不需要工具，直接回答。
+            現在のユーザー質問に必要な Skill 指示を読み込みました。
+            再度 `load_skill` を呼び出さないでください。
+            デバイス操作が必要な場合は対応するツールを直接呼び出してください。ツールが不要な場合は直接回答してください。
 
-            已加载的 Skill 指令：
+            読み込み済みの Skill 指示：
             \(skillInstructions)
             """
         )
@@ -226,19 +227,19 @@ struct PromptBuilder {
         var prompt = systemInstructions
         prompt += """
         <|turn>user
-        用户问题：
+        ユーザーの質問：
         \(userQuestion)\(imagePromptSuffix(count: currentImageCount))
 
-        处理这个请求时，严格按以下顺序执行：
-        1. 使用已经加载的 Skill 指令，不要再次调用 `load_skill`。
-        2. 如果需要设备内操作，直接调用对应工具。
-        3. 如果工具已经成功返回，或者已经足够回答，就只输出最终结果。
+        このリクエストを処理する際は、以下の順序で厳密に実行してください：
+        1. 読み込み済みの Skill 指示を使用し、再度 `load_skill` を呼び出さないでください。
+        2. デバイス操作が必要な場合は、対応するツールを直接呼び出してください。
+        3. ツールが成功して返り値を得た場合、または回答に十分な場合は、最終結果のみを出力してください。
 
-        不要让用户去“打开 skill”或“使用某个能力”，需要的话你自己直接调用工具。
-        你必须避免输出任何中间思考、状态更新、字段名、JSON 模板、代码块或规划草稿。
+        ユーザーに「〇〇能力を使ってください」と指示しないでください。必要な場合はあなた自身でツールを直接呼び出してください。
+        中間の思考・ステータス更新・フィールド名・JSON テンプレート・コードブロック・計画草稿の出力は禁止です。
         \(forceResponse
-          ? "你的下一条回复必须是以下两种之一：1. 一个 `<tool_call>...</tool_call>` 2. 直接给用户的最终回答正文。禁止输出空白。"
-          : "如果需要工具就直接调用；如果已经足够回答，就直接给出最终答案正文。")
+          ? "次の回答は以下の2つのいずれかでなければなりません：1. `<tool_call>...</tool_call>` 2. ユーザーへの最終回答本文。空白の出力は禁止です。"
+          : "ツールが必要であれば直接呼び出してください。回答に十分であれば、最終回答本文を直接提供してください。")
         <turn|>
         <|turn>model
 
@@ -246,8 +247,8 @@ struct PromptBuilder {
         return prompt
     }
 
-    /// 工具执行完成后，重新构造一个最小回答 prompt，避免把上一轮 tool_call
-    /// 和完整历史继续累积到 follow-up 中。
+    /// ツール実行完了後に最小限の回答プロンプトを構築。
+    /// 前のターンの tool_call と完全な履歴をフォローアップに累積しないようにする。
     static func buildToolAnswerPrompt(
         originalPrompt: String,
         toolName: String,
@@ -259,26 +260,26 @@ struct PromptBuilder {
 
         return systemBlock + """
         <|turn>user
-        用户原始问题：
+        ユーザーの元の質問：
         \(userQuestion)\(imagePromptSuffix(count: currentImageCount))
 
-        工具 \(toolName) 已执行完成。
-        可直接给用户的结果：
+        ツール \(toolName) の実行が完了しました。
+        ユーザーに直接提供できる結果：
         \(toolResultSummary)
 
-        请基于以上结果直接回答用户。
-        如果上面的内容已经是完整答案，你可以只做最少整理，但不要遗漏关键信息。
-        不要重复调用工具，不要反问，不要提到工具名、Skill、status、result、arguments 等字段。
-        不要输出 Markdown 代码块，也不要输出 JSON、键名、模板或中间步骤。
-        不能输出空白。
+        上記の結果に基づいてユーザーに直接回答してください。
+        内容が完全な回答である場合は最小限の整理のみ行い、重要な情報を省略しないでください。
+        ツールを再呼び出ししないでください。反問しないでください。ツール名・Skill・status・result・arguments などのフィールドに言及しないでください。
+        Markdown コードブロック・JSON・キー名・テンプレート・中間ステップは出力しないでください。
+        空白の出力は禁止です。
         <turn|>
         <|turn>model
 
         """
     }
 
-    /// 单 Skill + 单工具时，先只让模型抽取 arguments，避免它直接续写出半截
-    /// `<tool_call>` 或字段草稿。
+    /// 単一 Skill + 単一ツール時：モデルに arguments のみを抽出させる。
+    /// 半端な `<tool_call>` やフィールド草稿を直接続けて書かせないようにする。
     static func buildSingleToolArgumentsPrompt(
         originalPrompt: String,
         userQuestion: String,
@@ -291,38 +292,38 @@ struct PromptBuilder {
         let systemInstructions = injectIntoSystemBlock(
             systemBlock,
             extraInstructions: """
-            对于当前这一个用户问题，你已经加载了所需的 Skill 指令。
-            不要再次调用 `load_skill`。
+            現在のユーザー質問に必要な Skill 指示を読み込みました。
+            再度 `load_skill` を呼び出さないでください。
 
-            已加载的 Skill 指令：
+            読み込み済みの Skill 指示：
             \(skillInstructions)
             """
         )
 
         return systemInstructions + """
         <|turn>user
-        用户问题：
+        ユーザーの質問：
         \(userQuestion)\(imagePromptSuffix(count: currentImageCount))
 
-        你现在只负责为工具 `\(toolName)` 提取 arguments。
-        工具参数说明：
+        あなたは今、ツール `\(toolName)` の arguments を抽出することだけを担当します。
+        ツールのパラメータ説明：
         \(toolParameters)
 
-        严格遵守以下要求：
-        1. 不要调用工具，不要输出 `<tool_call>`。
-        2. 只输出一个 JSON object，内容就是 arguments 本身。
-        3. 不要输出 Markdown、代码块、解释、字段草稿或多余文字。
-        4. 可选字段如果没有，就直接省略。
-        5. 时间字段必须转换成 ISO 8601，例如 `2026-04-07T20:00:00`。
-        6. 如果缺少必填参数，输出：
-           {"_needs_clarification":"请补充缺少的信息"}
+        以下の要件を厳守してください：
+        1. ツールを呼び出さないでください。`<tool_call>` を出力しないでください。
+        2. arguments 自体の JSON object のみを出力してください。
+        3. Markdown・コードブロック・説明・フィールド草稿・余分なテキストは出力しないでください。
+        4. 任意フィールドがない場合は省略してください。
+        5. 時刻フィールドは ISO 8601 に変換してください（例：`2026-04-07T20:00:00`）。
+        6. 必須パラメータが不足している場合は以下を出力してください：
+           {"_needs_clarification":"不足している情報を補足してください"}
         <turn|>
         <|turn>model
 
         """
     }
 
-    /// 单 Skill + 多工具时，让模型只在允许的工具集合中选择一个工具并抽取 arguments。
+    /// 単一 Skill + 複数ツール時：許可されたツールセットから1つ選択して arguments を抽出させる。
     static func buildSkillToolSelectionPrompt(
         originalPrompt: String,
         userQuestion: String,
@@ -334,36 +335,36 @@ struct PromptBuilder {
         let systemInstructions = injectIntoSystemBlock(
             systemBlock,
             extraInstructions: """
-            对于当前这一个用户问题，你已经加载了所需的 Skill 指令。
-            不要再次调用 `load_skill`。
+            現在のユーザー質問に必要な Skill 指示を読み込みました。
+            再度 `load_skill` を呼び出さないでください。
 
-            已加载的 Skill 指令：
+            読み込み済みの Skill 指示：
             \(skillInstructions)
             """
         )
 
         return systemInstructions + """
         <|turn>user
-        用户问题：
+        ユーザーの質問：
         \(userQuestion)\(imagePromptSuffix(count: currentImageCount))
 
-        你现在只负责两件事：
-        1. 在下面允许的工具里选择最合适的一个
-        2. 为该工具提取 arguments
+        あなたは今、以下の2つのことだけを担当します：
+        1. 以下の許可されたツールの中から最適なものを1つ選択する
+        2. そのツールの arguments を抽出する
 
-        允许的工具：
+        許可されたツール：
         \(allowedToolsSummary)
 
-        严格遵守以下要求：
-        1. 不要调用工具，不要输出 `<tool_call>`。
-        2. 只输出一个 JSON object，格式必须是：
-           {"name":"工具名","arguments":{"参数名":"参数值"}}
-        3. `name` 必须是上面允许的工具之一。
-        4. `arguments` 里只保留当前工具需要的参数；没有的可选参数直接省略。
-        5. 不要输出 Markdown、代码块、解释、草稿或多余文字。
-        6. 时间字段必须转换成 ISO 8601，例如 `2026-04-07T20:00:00`。
-        7. 如果缺少执行所需的关键信息，输出：
-           {"_needs_clarification":"请补充缺少的信息"}
+        以下の要件を厳守してください：
+        1. ツールを呼び出さないでください。`<tool_call>` を出力しないでください。
+        2. 以下の形式の JSON object のみを出力してください：
+           {"name":"ツール名","arguments":{"パラメータ名":"パラメータ値"}}
+        3. `name` は上記の許可されたツールのいずれかでなければなりません。
+        4. `arguments` には現在のツールに必要なパラメータのみを含め、任意パラメータがなければ省略してください。
+        5. Markdown・コードブロック・説明・草稿・余分なテキストは出力しないでください。
+        6. 時刻フィールドは ISO 8601 に変換してください（例：`2026-04-07T20:00:00`）。
+        7. 実行に必要な重要情報が不足している場合は以下を出力してください：
+           {"_needs_clarification":"不足している情報を補足してください"}
         <turn|>
         <|turn>model
 

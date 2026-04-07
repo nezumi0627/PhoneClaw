@@ -1,15 +1,15 @@
 import Foundation
 
-// MARK: - Skill 数据模型
+// MARK: - Skill データモデル
 //
-// 文件驱动架构：
-//   - SKILL.md 定义 Skill 元数据 + 指令体（热更新）
-//   - ToolRegistry.swift 注册原生工具实现（编译时）
-//   - SkillLoader.swift 解析和加载 SKILL.md
+// ファイル駆動アーキテクチャ：
+//   - SKILL.md が Skill のメタデータ + 指示本文を定義（ホットリロード対応）
+//   - ToolRegistry.swift がネイティブツール実装を登録（コンパイル時）
+//   - SkillLoader.swift が SKILL.md を解析・ロード
 //
-// 以下仅为给 UI 和 PromptBuilder 使用的精简数据结构。
+// 以下は UI と PromptBuilder が使用する軽量データ構造のみ。
 
-// MARK: - Skill 条目（给 UI 管理用）
+// MARK: - スキルエントリー（UI管理用）
 
 struct ToolInfo: Equatable {
     let name: String
@@ -18,16 +18,16 @@ struct ToolInfo: Equatable {
 }
 
 struct SkillEntry: Identifiable {
-    let id: String          // skill directory name, e.g. "clipboard"
-    var name: String        // display name, e.g. "Clipboard"
+    let id: String          // スキルディレクトリ名（例: "clipboard"）
+    var name: String        // 表示名（例: "クリップボード"）
     var description: String
     var icon: String
     var samplePrompt: String
     var tools: [ToolInfo] = []
     var isEnabled: Bool = true
-    var filePath: URL?      // SKILL.md 路径（用于编辑）
+    var filePath: URL?      // SKILL.md のパス（編集用）
 
-    /// 从 SkillDefinition 转换
+    /// SkillDefinition から変換
     init(from def: SkillDefinition, registry: ToolRegistry) {
         self.id = def.id
         self.name = def.metadata.displayName
@@ -43,10 +43,10 @@ struct SkillEntry: Identifiable {
     }
 }
 
-// MARK: - SkillInfo（给 PromptBuilder 用的精简描述）
+// MARK: - SkillInfo（PromptBuilder 向けの簡易説明）
 
 struct SkillInfo {
-    let name: String        // skill id, e.g. "clipboard"
+    let name: String        // スキルID（例: "clipboard"）
     let description: String
     var displayName: String = ""
     var icon: String = "wrench"

@@ -1,0 +1,98 @@
+name: Build Unsigned IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Info.plist'           # バージョン変更時のみビルド実行
+  workflow_dispatch:           # 手動実行も可能
+
+jobs:
+  build:
+    runs-on: macos-15          # Xcode 16 / iOS 18 SDK が必要
+
+    steps:
+      # ─────────────────────────────────────────────
+      # 1. チェックアウト
+      # ─────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ─────────────────────────────────────────────
+      # 2. Xcode バージョン確認
+      # ─────────────────────────────────────────────
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      # ─────────────────────────────────────────────
+      # 3. CocoaPods インストール
+      # ─────────────────────────────────────────────
+      - name: Install CocoaPods dependencies
+        run: |
+          gem install cocoapods --no-document 2>/dev/null || true
+          pod install --repo-update
+
+      # ─────────────────────────────────────────────
+      # 4. バージョン取得
+      # ─────────────────────────────────────────────
+      - name: Get version from Info.plist
+        id: version
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist 2>/dev/null || echo "1.0.0")
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" Info.plist 2>/dev/null || echo "1")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build=$BUILD"     >> $GITHUB_OUTPUT
+          echo "📦 Version: $VERSION ($BUILD)"
+
+      # ─────────────────────────────────────────────
+      # 5. xcarchive ビルド（署名なし）
+      # ─────────────────────────────────────────────
+      - name: Build archive (unsigned)
+        run: |
+          xcodebuild archive \
+            -workspace PhoneClaw.xcworkspace \
+            -scheme PhoneClaw \
+            -configuration Release \
+            -archivePath $RUNNER_TEMP/PhoneClaw.xcarchive \
+            -destination "generic/platform=iOS" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            | xcpretty || true
+
+      # ─────────────────────────────────────────────
+      # 6. .app → Payload → .ipa パッケージング
+      # ─────────────────────────────────────────────
+      - name: Package IPA
+        run: |
+          APP_PATH=$(find $RUNNER_TEMP/PhoneClaw.xcarchive/Products -name "*.app" | head -1)
+          mkdir -p $RUNNER_TEMP/Payload
+          cp -R "$APP_PATH" $RUNNER_TEMP/Payload/
+          cd $RUNNER_TEMP
+          zip -r PhoneClaw.ipa Payload
+          echo "✅ IPA created: $(du -sh PhoneClaw.ipa | cut -f1)"
+
+      # ─────────────────────────────────────────────
+      # 7. GitHub Release として公開
+      # ─────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ steps.version.outputs.version }}-${{ steps.version.outputs.build }}
+          name: PhoneClaw v${{ steps.version.outputs.version }} (Build ${{ steps.version.outputs.build }})
+          artifacts: ${{ runner.temp }}/PhoneClaw.ipa
+          artifactContentType: application/octet-stream
+          draft: true          # 確認後に手動で公開
+          generateReleaseNotes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ─────────────────────────────────────────────
+      # 8. アーティファクトとしてもアップロード
+      # ─────────────────────────────────────────────
+      - name: Upload IPA as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhoneClaw-v${{ steps.version.outputs.version }}-unsigned
+          path: ${{ runner.temp }}/PhoneClaw.ipa
+          retention-days: 30

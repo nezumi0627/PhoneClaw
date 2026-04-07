@@ -31,6 +31,36 @@ public enum ModelInstallState: Equatable, Sendable {
 /// Forces MLX Metal GPU path — no CPU fallback.
 @Observable
 public class MLXLocalLLMService: LLMEngine {
+    // MARK: - Custom Model Support
+    /// ユーザーが「ファイルを選択」でインポートしたモデルのパス
+    @MainActor
+    public static var customModelPaths: [String: URL] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: "customModelPaths"),
+                  let decoded = try? JSONDecoder().decode([String: String].self, from: data)
+            else { return [:] }
+            return decoded.compactMapValues { URL(string: $0) }
+        }
+        set {
+            let encoded = newValue.compactMapValues { $0.absoluteString }
+            let data = try? JSONEncoder().encode(encoded)
+            UserDefaults.standard.set(data, forKey: "customModelPaths")
+        }
+    }
+
+    @MainActor
+    public static func registerCustomModel(name: String, url: URL) {
+        var paths = customModelPaths
+        paths[name] = url
+        customModelPaths = paths
+    }
+
+    @MainActor
+    public static func unregisterCustomModel(name: String) {
+        var paths = customModelPaths
+        paths.removeValue(forKey: name)
+        customModelPaths = paths
+    }
     static let availableModels: [BundledModelOption] = [
         .init(
             id: "gemma-4-e2b-it-4bit",
@@ -95,7 +125,7 @@ public class MLXLocalLLMService: LLMEngine {
     public private(set) var isLoading = false
     public private(set) var isGenerating = false
     public private(set) var stats = LLMStats()
-    public var statusMessage = "等待加载模型..."
+    public var statusMessage = "モデルの読み込みを待っています..."
     public private(set) var selectedModel = defaultModel
     public private(set) var loadedModel: BundledModelOption?
     public var modelDisplayName: String { loadedModel?.displayName ?? selectedModel.displayName }
@@ -158,16 +188,21 @@ public class MLXLocalLLMService: LLMEngine {
 
         selectedModel = option
         statusMessage = isLoaded
-            ? "已选择 \(option.displayName)，准备重新加载..."
-            : "已选择 \(option.displayName)，等待加载..."
+            ? "「\(option.displayName)」を選択しました。再読み込みの準備中..."
+            : "「\(option.displayName)」を選択しました。読み込み待機中..."
         return true
     }
 
     private static func resolveModelPath(for model: BundledModelOption) -> URL {
+        // 1. ユーザー登録のカスタムパスを最優先で確認
+        if let customURL = (try? MainActor.assumeIsolated { customModelPaths[model.id] }) {
+            return customURL
+        }
+        // 2. バンドル内蔵
         if let bundledPath = bundledModelPath(for: model) {
             return bundledPath
         }
-
+        // 3. ダウンロード済み
         return downloadedModelPath(for: model)
     }
 
@@ -368,14 +403,14 @@ public class MLXLocalLLMService: LLMEngine {
                 try await warmup()
             } catch is CancellationError {
                 await MainActor.run {
-                    if self.statusMessage.hasPrefix("正在加载") || self.statusMessage.hasPrefix("正在初始化") {
-                        self.statusMessage = "已取消模型切换"
+                    if self.statusMessage.contains("読み込") || self.statusMessage.contains("初期化") {
+                        self.statusMessage = "モデルの切り替えをキャンセルしました"
                     }
                 }
             } catch {
                 if let mlxError = error as? MLXError,
                    case .modelDirectoryMissing = mlxError {
-                    statusMessage = "请在配置中下载 \(self.selectedModel.displayName) 模型"
+                    statusMessage = "設定から\(self.selectedModel.displayName)モデルをダウンロードしてください"
                 } else {
                     statusMessage = "❌ \(error.localizedDescription)"
                 }
@@ -483,7 +518,7 @@ public class MLXLocalLLMService: LLMEngine {
         defer {
             isLoading = false
         }
-        statusMessage = "正在初始化模型..."
+        statusMessage = "モデルを初期化中..."
         await Gemma4Registration.setAudioCapabilityEnabled(audioCapabilityEnabled)
         await Gemma4Registration.register()
 
@@ -491,7 +526,7 @@ public class MLXLocalLLMService: LLMEngine {
             throw MLXError.modelDirectoryMissing(model.displayName)
         }
 
-        statusMessage = "正在加载 \(model.displayName)..."
+        statusMessage = "\(model.displayName)を読み込んでいます..."
         let loadStart = CFAbsoluteTimeGetCurrent()
         print("[MLX] load capability — audio=\(audioCapabilityEnabled ? 1 : 0)")
 
@@ -519,7 +554,7 @@ public class MLXLocalLLMService: LLMEngine {
 
         let elapsed = (CFAbsoluteTimeGetCurrent() - loadStart) * 1000
         stats.loadTimeMs = elapsed
-        statusMessage = "模型已就绪 ✅ (\(Int(elapsed))ms)"
+        statusMessage = "モデルの準備完了 ✅ (\(Int(elapsed))ms)"
 
         print("[MLX] Model loaded in \(Int(elapsed))ms — backend: mlx-gpu — model: \(model.displayName)")
     }
@@ -594,7 +629,7 @@ public class MLXLocalLLMService: LLMEngine {
         // Skipping warmup means the first user inference compiles shaders lazily
         // (first response is ~2-3s slower) but avoids the OOM kill on startup.
         print("[MLX] Warmup skipped — shaders will compile on first inference")
-        statusMessage = "模型已就绪 ✅"
+        statusMessage = "モデルの準備完了 ✅"
     }
 
     public func generateStream(
@@ -1233,7 +1268,7 @@ public class MLXLocalLLMService: LLMEngine {
         stats = LLMStats()
         stats.backend = "mlx-gpu"
         MLX.GPU.clearCache()
-        statusMessage = "模型已卸载"
+        statusMessage = "モデルのアンロード完了"
         print("[MLX] Model unloaded")
     }
 }
@@ -1251,11 +1286,11 @@ enum MLXError: LocalizedError {
         case .modelNotLoaded:
             return "MLX model not loaded. Call load() first."
         case .modelDirectoryMissing(let modelName):
-            return "\(modelName) 模型文件不存在，请先在配置页下载或重新安装。"
+            return "\(modelName)のモデルファイルが見つかりません。設定からダウンロードまたは再インストールしてください。"
         case .gpuExecutionRequiresForeground:
-            return "应用进入后台时，iPhone 不允许继续提交 GPU 推理任务。"
+            return "アプリがバックグラウンドに移行すると、GPU推論タスクを継続できません。"
         case .multimodalMemoryRisk(let model, let headroomMB, let recommendation):
-            return "\(model) 当前剩余内存仅约 \(headroomMB) MB，继续处理图片/音频很可能被系统直接杀掉。\(recommendation)"
+            return "\(model) の剩りメモリは約 \(headroomMB) MBです。畫像/音声を処理続けるとシステムに強制終了される可能性があります。\(recommendation)"
         }
     }
 }
@@ -1268,19 +1303,19 @@ enum DownloadError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL(let file):
-            return "无法构造下载链接：\(file)"
+            return "ダウンロードURLを構築できません：\(file)"
         case .invalidResponse:
-            return "下载源响应无效"
+            return "ダウンロード元のレスポンスが無効です"
         case .httpStatus(let statusCode):
             switch statusCode {
             case 401, 403:
-                return "下载源拒绝访问（\(statusCode)）"
+                return "ダウンロード元へのアクセスが拒否されました（\(statusCode)）"
             case 404:
-                return "模型文件不存在（404）"
+                return "モデルファイルが見つかりません（404）"
             case 429:
-                return "下载过于频繁，请稍后重试（429）"
+                return "ダウンロードが多すぎます。しばらく待ってから再試行してください（429）"
             default:
-                return "下载失败，HTTP \(statusCode)"
+                return "ダウンロードに失敗しました。HTTP \(statusCode)"
             }
         }
     }

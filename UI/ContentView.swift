@@ -9,11 +9,11 @@ import PhotosUI
 import UIKit
 #endif
 
-private func localizedThinkingText(_ zh: String, _ en: String) -> String {
-    Locale.preferredLanguages.contains { $0.hasPrefix("zh") } ? zh : en
+private func localizedThinkingText(_ ja: String, _ en: String) -> String {
+    Locale.preferredLanguages.contains { $0.hasPrefix("ja") } ? ja : en
 }
 
-// MARK: - 主入口
+// MARK: - メインエントリー
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -24,9 +24,9 @@ struct ContentView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showConfigurations = false
     @State private var showSkillsManager = false
-    /// 记录每个 skill 卡片的展开状态（key = SkillCard.id）
+    /// 各スキルカードの展開状態（key = SkillCard.id）
     @State private var expandedSkills: Set<UUID> = []
-    /// 记录每个 THINK 卡片的展开状态（key = ResponseBlock.id）
+    /// 各THINKカードの展開状態（key = ResponseBlock.id）
     @State private var expandedThoughts: Set<UUID> = []
     @FocusState private var isInputFocused: Bool
 
@@ -112,7 +112,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 聊天列表
+    // MARK: - チャットリスト
 
     private var chatList: some View {
         ScrollViewReader { proxy in
@@ -187,11 +187,11 @@ struct ContentView: View {
         engine.applySamplingConfig()
     }
 
-    // MARK: - 顶部栏
+    // MARK: - 上部バー
 
     private var topBar: some View {
         HStack(spacing: 0) {
-            // 左：新会话
+            // 左：新しい会話
             Button(action: { engine.clearMessages() }) {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 15, weight: .medium))
@@ -203,7 +203,7 @@ struct ContentView: View {
 
             Spacer()
 
-            // 中：模型状态
+            // 中央：モデル状態
             HStack(spacing: 6) {
                 Circle()
                     .fill(engine.llm.isLoaded ? Theme.accentGreen : Theme.accent)
@@ -215,7 +215,7 @@ struct ContentView: View {
 
             Spacer()
 
-            // 右：Skills + 设置
+            // 右：Skills + 設定
             HStack(spacing: 6) {
                 Button(action: toggleThinkingMode) {
                     HStack(spacing: 6) {
@@ -257,7 +257,7 @@ struct ContentView: View {
         .padding(.vertical, 10)
     }
 
-    // MARK: - 欢迎页
+    // MARK: - ウェルカム画面
 
     private var welcomeView: some View {
         VStack(spacing: 0) {
@@ -280,7 +280,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Skill 快捷标签
+    // MARK: - Skill クイックタグ
 
     private var skillChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -309,7 +309,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 输入栏
+    // MARK: - 入力バー
 
     private var inputBar: some View {
         VStack(spacing: 10) {
@@ -500,7 +500,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 用户气泡
+// MARK: - ユーザーバブル
 
 struct UserBubble: View {
     let text: String
@@ -540,7 +540,7 @@ struct AudioAttachmentBubble: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Label("语音消息", systemImage: "waveform.badge.mic")
+                Label("音声メッセージ", systemImage: "waveform.badge.mic")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
 
@@ -574,7 +574,7 @@ struct AudioAttachmentBubble: View {
                     .frame(height: 30)
 
                     HStack(spacing: 8) {
-                        Text(player.isPlaying ? "播放中" : "点击播放")
+                        Text(player.isPlaying ? "再生中" : "タップして再生")
                             .font(.system(size: 11))
                             .foregroundStyle(player.isPlaying ? Theme.accent : Theme.textSecondary)
 
@@ -794,7 +794,7 @@ struct RecordingStatusCard: View {
                     Circle()
                         .fill(Color.red.opacity(0.92))
                         .frame(width: 8, height: 8)
-                    Text("录音中")
+                    Text("録音中")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.textPrimary)
                 }
@@ -821,7 +821,7 @@ struct RecordingStatusCard: View {
                     RecordingLevelBars(level: peakLevel)
                         .frame(height: 28)
 
-                    Text("点左侧按钮结束录音，发送时会作为音频附件一并发出。")
+                    Text("左のボタンで録音を終了し、送信時に音声添付として一緒に送られます。")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
@@ -872,7 +872,7 @@ struct ComposerAudioDraftCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Label("语音草稿", systemImage: "paperplane.circle.fill")
+                Label("音声下書き", systemImage: "paperplane.circle.fill")
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
 
@@ -910,7 +910,7 @@ struct ComposerAudioDraftCard: View {
                     .frame(height: 30)
 
                     HStack(spacing: 8) {
-                        Text(player.isPlaying ? "预览播放中" : "可直接发送，也可以先试听")
+                        Text(player.isPlaying ? "プレビュー再生中" : "そのまま送信、または試聴できます")
                             .font(.system(size: 11))
                             .foregroundStyle(player.isPlaying ? Theme.accent : Theme.textSecondary)
 
@@ -1032,7 +1032,7 @@ struct UserBubbleShape: Shape {
     }
 }
 
-// MARK: - AI 回复
+// MARK: - AI 回答
 
 struct AIResponseView: View {
     let block: ResponseBlock
@@ -1119,7 +1119,7 @@ struct ThinkingCardView: View {
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !compact.isEmpty else { return localizedThinkingText("已捕获思考内容", "Captured thinking content") }
+        guard !compact.isEmpty else { return localizedThinkingText("思考内容を取得しました", "Captured thinking content") }
         return String(compact.prefix(72)) + (compact.count > 72 ? "…" : "")
     }
 
@@ -1180,7 +1180,7 @@ struct ThinkingCardView: View {
     }
 }
 
-// MARK: - 单个 Skill 卡片（4 步进度）
+// MARK: - 単一 Skill カード（4ステップ進捗）
 
 struct SkillCardView: View {
     let card: SkillCard
@@ -1242,18 +1242,18 @@ struct SkillCardView: View {
                 Rectangle().fill(Theme.borderSubtle).frame(height: 1)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    stepRow(label: "识别能力: \(card.skillName)",
-                            done: currentStep > 0,
-                            active: currentStep == 0)
-                    stepRow(label: "加载 Skill 指令",
-                            done: currentStep > 1,
-                            active: currentStep == 1)
-                    stepRow(label: card.toolName != nil ? "执行 \(card.toolName!)" : "执行工具",
-                            done: currentStep > 2,
-                            active: currentStep == 2)
-                    stepRow(label: "生成回复",
-                            done: isSkillDone,
-                            active: false)
+                    stepRow(label: "能力を認識: \(card.skillName)",
+                    done: currentStep > 0,
+                    active: currentStep == 0)
+                    stepRow(label: "Skill指示を読み込み",
+                    done: currentStep > 1,
+                    active: currentStep == 1)
+                    stepRow(label: card.toolName != nil ? "\(card.toolName!)を実行" : "ツールを実行",
+                    done: currentStep > 2,
+                    active: currentStep == 2)
+                    stepRow(label: "応答を生成",
+                    done: isSkillDone,
+                    active: false)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -1286,7 +1286,7 @@ struct SkillCardView: View {
     }
 }
 
-// MARK: - 旋转 Spinner
+// MARK: - 回転スピナー
 
 struct SpinnerIcon: View {
     @State private var rotating = false
@@ -1300,7 +1300,7 @@ struct SpinnerIcon: View {
     }
 }
 
-// MARK: - 思考动画
+// MARK: - 思考アニメーション
 
 struct ThinkingIndicator: View {
     @State private var active = 0

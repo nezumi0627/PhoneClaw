@@ -1,76 +1,76 @@
-# 第三部分（续）：无需权限的系统 API
+# 第3部（続き）：権限不要のシステム API
 
 ---
 
-## 21. ⚡ 触觉反馈 — Core Haptics
+## 21. ⚡ 触覚フィードバック — Core Haptics
 
-### 权限: 无需
+### 権限: 不要
 
-| API | 能力 |
+| API | 機能 |
 |-----|------|
-| `UIImpactFeedbackGenerator` | 碰撞反馈 (轻/中/重) |
-| `UISelectionFeedbackGenerator` | 选择反馈 |
-| `UINotificationFeedbackGenerator` | 通知反馈 (成功/警告/错误) |
-| `CHHapticEngine` + `CHHapticPattern` | 自定义震动模式编排 |
+| `UIImpactFeedbackGenerator` | 衝撃フィードバック（弱・中・強）|
+| `UISelectionFeedbackGenerator` | 選択フィードバック |
+| `UINotificationFeedbackGenerator` | 通知フィードバック（成功・警告・エラー）|
+| `CHHapticEngine` + `CHHapticPattern` | カスタム振動パターンの設計 |
 
-### Skill: `haptic_feedback` → Agent 回复/错误/导航时触觉确认
+### スキル: `haptic_feedback` → Agent の応答・エラー・ナビゲーション時に触覚でフィードバック
 
 ---
 
-## 22. 📺 设备信息 — UIDevice / UIScreen / ProcessInfo
+## 22. 📺 デバイス情報 — UIDevice / UIScreen / ProcessInfo
 
-### 权限: 无需
+### 権限: 不要
 
-| API | 能力 |
+| API | 機能 |
 |-----|------|
-| `UIScreen.main.brightness` | 获取/设置屏幕亮度 |
-| `UIDevice.current.batteryLevel` | 电池电量 |
-| `UIDevice.current.batteryState` | 充电状态 |
-| `UIDevice.current.model` | 设备型号 |
-| `UIDevice.current.systemVersion` | iOS 版本 |
-| `ProcessInfo.processInfo.thermalState` | 设备温度状态 |
-| `ProcessInfo.processInfo.isLowPowerModeEnabled` | 低电量模式 |
-| `ProcessInfo.processInfo.physicalMemory` | 物理内存 |
+| `UIScreen.main.brightness` | 画面の明るさを取得/設定 |
+| `UIDevice.current.batteryLevel` | バッテリー残量 |
+| `UIDevice.current.batteryState` | 充電状態 |
+| `UIDevice.current.model` | デバイスモデル |
+| `UIDevice.current.systemVersion` | iOS バージョン |
+| `ProcessInfo.processInfo.thermalState` | デバイスの温度状態 |
+| `ProcessInfo.processInfo.isLowPowerModeEnabled` | 低電力モードの状態 |
+| `ProcessInfo.processInfo.physicalMemory` | 物理メモリ容量 |
 
-### Skills
+### スキル
 ```
-skill: device_info       → 返回设备型号/版本/电量/温度
-skill: screen_brightness → 读取或调节屏幕亮度
-skill: battery_status    → 电量 + 充电状态 + 低电量模式
+skill: device_info       → デバイスモデル・バージョン・バッテリー・温度を返す
+skill: screen_brightness → 画面の明るさを取得または調整
+skill: battery_status    → バッテリー残量・充電状態・低電力モードを確認
 ```
 
 ---
 
-## 23. 🔑 Keychain — Security Framework
+## 23. 🔑 キーチェーン — Security Framework
 
-### 权限: 无需 (沙箱内自动可用)
+### 権限: 不要（サンドボックス内で自動的に利用可能）
 
-| API | 能力 |
+| API | 機能 |
 |-----|------|
-| `SecItemAdd()` | 加密存储密钥/密码 |
-| `SecItemCopyMatching()` | 查询存储项 |
-| `SecItemUpdate()` / `SecItemDelete()` | 更新/删除 |
+| `SecItemAdd()` | APIキー・パスワードを暗号化して保存 |
+| `SecItemCopyMatching()` | 保存された項目を検索 |
+| `SecItemUpdate()` / `SecItemDelete()` | 更新・削除 |
 
-### Skill: Agent 安全存储 API 密钥和用户凭证
+### スキル: Agent が API キーとユーザー認証情報を安全に保存
 
 ---
 
-## 24. 💾 UserDefaults — 轻量存储
+## 24. 💾 UserDefaults — 軽量データ保存
 
-### 权限: 无需 (需 Privacy Manifest 声明)
+### 権限: 不要（Privacy Manifest への記載が必要）
 
-用途: Agent 记忆用户偏好（语言、目标、人格设置）
+用途: ユーザーの設定（言語・目標・パーソナリティ設定）を Agent が記憶する
 
 ---
 
-## 25. 🎙 语音合成 — AVSpeechSynthesizer
+## 25. 🎙 音声合成 — AVSpeechSynthesizer
 
-### 权限: 无需
+### 権限: 不要
 
-| API | 能力 |
+| API | 機能 |
 |-----|------|
-| `AVSpeechSynthesizer.speak()` | 文字转语音 |
-| `AVSpeechSynthesisVoice` | 选择语言/声音 |
-| `.rate` / `.pitchMultiplier` / `.volume` | 语速/音调/音量 |
+| `AVSpeechSynthesizer.speak()` | テキストを音声に変換して再生 |
+| `AVSpeechSynthesisVoice` | 言語・音声の選択 |
+| `.rate` / `.pitchMultiplier` / `.volume` | 速度・ピッチ・音量 |
 
-### Skill: `tts_speak` → Agent 语音回复用户
+### スキル: `tts_speak` → Agent がユーザーに音声で返答

@@ -8,6 +8,7 @@ func log(_ message: String) {
 }
 
 private extension UserInput.Audio {
+    // PCMスナップショットから UserInput.Audio を生成
     static func from(snapshot: AudioCaptureSnapshot) -> UserInput.Audio {
         .pcm(
             .init(
@@ -19,7 +20,7 @@ private extension UserInput.Audio {
     }
 }
 
-// MARK: - 模型/推理配置
+// MARK: - モデル/推論設定
 
 @Observable
 class ModelConfig {
@@ -34,34 +35,34 @@ class ModelConfig {
     var enableThinking = UserDefaults.standard.bool(forKey: enableThinkingDefaultsKey)
     var selectedModelID = UserDefaults.standard.string(forKey: selectedModelDefaultsKey)
         ?? MLXLocalLLMService.defaultModel.id
-    /// System prompt — 由 AgentEngine.loadSystemPrompt() 从 SYSPROMPT.md 注入，不在代码里硬编码。
+    /// システムプロンプト — AgentEngine.loadSystemPrompt() が SYSPROMPT.md から注入する。コードにハードコーディングしない。
     var systemPrompt = ""
 }
 
-// MARK: - SYSPROMPT 默认内容（仅在文件不存在时写入磁盘）
+// MARK: - SYSPROMPT デフォルト内容（ファイルが存在しない場合のみディスクに書き込む）
 private let kDefaultSystemPrompt = """
-你是 PhoneClaw，一个运行在本地设备上的私人 AI 助手。你完全离线运行，不联网，保护用户隐私。
+あなたは PhoneClaw です。ローカルデバイス上で動作するプライベート AI アシスタントです。完全にオフラインで動作し、インターネットに接続せず、ユーザーのプライバシーを保護します。
 
-你拥有以下能力（Skill）：
+あなたは以下の能力（Skill）を持っています：
 
 ___SKILLS___
 
-只有当用户明确要求执行某项设备内操作时，才调用 load_skill 加载该能力的详细指令。
-像"配置""信息""看看""帮我查一下"这类含糊词，不足以单独触发工具调用。
-如果用户只是普通聊天、追问上文、让你解释结果，直接回答，不要调用工具。
-如果确实需要某个能力，你必须自己调用 load_skill，不要让用户去"使用某个能力"或"打开某个 skill"。
+ユーザーがデバイス上の操作を明示的に求めた場合のみ、load_skill を呼び出して該当能力の詳細な指示を読み込んでください。
+「設定」「情報」「見てみて」「調べて」などの曖昧な表現だけでは、単独でツール呼び出しのトリガーにはなりません。
+ユーザーが普通の会話、前の話への追加質問、結果の説明を求めている場合は、直接回答してください。ツールを呼び出さないでください。
+特定の能力が必要な場合は、自分で load_skill を呼び出してください。ユーザーに「〇〇能力を使ってください」と指示しないでください。
 
-当且仅当确实需要某个能力时，先调用 load_skill：
+能力が必要な場合のみ、まず load_skill を呼び出してください：
 <tool_call>
 {"name": "load_skill", "arguments": {"skill": "能力名"}}
 </tool_call>
 
-在已经拿到工具结果后，优先直接给出最终答案，不要无谓追问。
-用中文回答，简洁实用。
+ツール結果を取得したら、追加の確認なしに最終回答を直接提供してください。
+日本語で簡潔かつ実用的に回答してください。
 """
 
 
-// MARK: - 聊天消息
+// MARK: - チャットメッセージ
 
 struct ChatImageAttachment: Identifiable {
     let id = UUID()
@@ -80,6 +81,7 @@ struct ChatImageAttachment: Identifiable {
         }
     }
 
+    // 画像を最大サイズにリサイズ
     static func preparedImage(_ image: UIImage, maxDimension: CGFloat = storageMaxDimension) -> UIImage {
         let originalSize = image.size
         let longestSide = max(originalSize.width, originalSize.height)
@@ -150,6 +152,7 @@ struct ChatAudioAttachment: Identifiable {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
+    // PCMサンプルから波形バケットを生成
     private static func makeWaveform(from pcm: [Float], bucketCount: Int = 36) -> [Float] {
         guard !pcm.isEmpty else { return Array(repeating: 0.12, count: bucketCount) }
         let samplesPerBucket = max(pcm.count / bucketCount, 1)
@@ -178,6 +181,7 @@ struct ChatAudioAttachment: Identifiable {
         return levels.map { max($0 / maxLevel, 0.08) }
     }
 
+    // PCMデータをWAVフォーマットに変換
     private static func makeWAVData(
         pcm: [Float],
         sampleRate: Double,
@@ -265,7 +269,7 @@ struct ChatMessage: Identifiable {
     }
 }
 
-// MARK: - Agent Engine
+// MARK: - エージェントエンジン
 
 @Observable
 class AgentEngine {
@@ -275,11 +279,11 @@ class AgentEngine {
     var isProcessing = false
     var config = ModelConfig()
 
-    // 文件驱动的 Skill 系统
+    // ファイル駆動スキルシステム
     let skillLoader = SkillLoader()
     let toolRegistry = ToolRegistry.shared
 
-    // Skill 条目（给 UI 管理用，可开关）
+    // スキルエントリー（UI管理用、有効/無効切り替え可能）
     var skillEntries: [SkillEntry] = []
 
     private let thinkingOpenMarker = "[[PHONECLAW_THINK]]"
@@ -317,7 +321,7 @@ class AgentEngine {
         }
     }
 
-    // MARK: - Skill 查找（文件驱动）
+    // MARK: - スキル検索（ファイル駆動）
 
     private func findSkillId(for name: String) -> String? {
         let resolvedName = skillLoader.canonicalSkillId(for: name)
@@ -342,6 +346,7 @@ class AgentEngine {
         return skillLoader.loadBody(skillId: resolvedSkillName)
     }
 
+    // ツール名の正規化（エイリアス解決）
     private func canonicalToolName(_ toolName: String, arguments: [String: Any]) -> String {
         switch toolName {
         case "contacts":
@@ -376,6 +381,7 @@ class AgentEngine {
         return try await toolRegistry.execute(name: toolName, args: args)
     }
 
+    // 読み込み済みスキルに対して自動でツール呼び出しを試みる
     private func autoToolCallForLoadedSkills(
         skillIds: [String]
     ) -> (name: String, arguments: [String: Any])? {
@@ -393,7 +399,7 @@ class AgentEngine {
         guard uniqueToolNames.count == 1,
               let toolName = uniqueToolNames.first,
               let tool = toolRegistry.find(name: toolName),
-              tool.parameters == "无" else {
+              tool.parameters == "なし" else {
             return nil
         }
 
@@ -414,6 +420,7 @@ class AgentEngine {
         return []
     }
 
+    // ユーザーの質問からフォールバックのツール呼び出しを推測
     private func inferFallbackToolCall(
         skillIds: [String],
         userQuestion: String
@@ -427,7 +434,7 @@ class AgentEngine {
         let tools = registeredTools(for: skillId)
         guard !tools.isEmpty else { return nil }
 
-        if tools.count == 1, tools[0].parameters == "无" {
+        if tools.count == 1, tools[0].parameters == "なし" {
             return (tools[0].name, [:])
         }
 
@@ -440,29 +447,29 @@ class AgentEngine {
         let candidateNames: [String]
         switch skillId {
         case "device":
-            if has("系统版本") || has("ios 版本") || has("版本号") {
+            if has("システムバージョン") || has("ios バージョン") || has("バージョン番号") {
                 candidateNames = ["device-system-version", "device-info"]
-            } else if has("名字") || has("名称") || has("叫什么") {
+            } else if has("名前") || has("名称") || has("何という") {
                 candidateNames = ["device-name", "device-info"]
-            } else if has("型号") || has("机型") {
+            } else if has("モデル") || has("機種") {
                 candidateNames = ["device-model", "device-info"]
-            } else if has("内存") || has("ram") {
+            } else if has("メモリ") || has("ram") {
                 candidateNames = ["device-memory", "device-info"]
-            } else if has("处理器") || has("核心") || has("cpu") {
+            } else if has("プロセッサ") || has("コア") || has("cpu") {
                 candidateNames = ["device-processor-count", "device-info"]
             } else {
                 candidateNames = ["device-info"]
             }
         case "contacts":
             let searchKeywords = [
-                "查", "检查", "查询", "看看", "电话", "手机号", "号码",
-                "联系方式", "邮箱", "mail", "email"
+                "調べ", "確認", "検索", "見て", "電話", "携帯番号", "番号",
+                "連絡先", "メール", "email"
             ]
             let deleteKeywords = [
-                "删除", "删掉", "删了", "删吗", "删", "移除", "去掉", "清除"
+                "削除", "消して", "消す", "消した", "削除して", "取り除く"
             ]
             let upsertKeywords = [
-                "存", "保存", "添加", "新建", "创建", "记一下", "记住", "更新", "修改"
+                "保存", "追加", "新規", "作成", "登録", "メモ", "覚えて", "更新", "変更"
             ]
 
             if deleteKeywords.contains(where: has) {
@@ -476,10 +483,10 @@ class AgentEngine {
             }
         case "clipboard":
             let writeKeywords = [
-                "复制", "拷贝", "写入", "放到剪贴板", "存到剪贴板", "复制到剪贴板"
+                "コピー", "書き込む", "クリップボードに", "クリップボードへ"
             ]
             let readKeywords = [
-                "剪贴板", "读一下", "读取", "看看", "看下", "查看", "内容"
+                "クリップボード", "読む", "読み取る", "見て", "確認", "内容"
             ]
 
             if writeKeywords.contains(where: has),
@@ -495,22 +502,22 @@ class AgentEngine {
             }
         case "calendar":
             let actionKeywords = [
-                "安排", "创建", "新建", "加入", "加到", "写进", "写入", "记到"
+                "作成", "新規", "追加", "予約", "登録", "書き込む", "入れる"
             ]
             let createIntent =
-                (has("日历") || has("日程") || has("会议") || has("约会"))
+                (has("カレンダー") || has("予定") || has("会議") || has("約束"))
                 && actionKeywords.contains(where: has)
             candidateNames = createIntent ? ["calendar-create-event"] : []
         case "reminders":
             let actionKeywords = [
-                "提醒", "提醒我", "记得", "待办", "创建", "新建", "添加"
+                "リマインド", "思い出させて", "リマインダー", "ToDo", "作成", "追加"
             ]
             let createIntent = actionKeywords.contains(where: has)
             candidateNames = createIntent ? ["reminders-create"] : []
         case "text":
-            if has("哈希") || has("hash") {
+            if has("ハッシュ") || has("hash") {
                 candidateNames = ["calculate-hash"]
-            } else if has("翻转") || has("反转") {
+            } else if has("逆順") || has("反転") {
                 candidateNames = ["text-reverse"]
             } else {
                 candidateNames = ["calculate-hash", "text-reverse"]
@@ -521,7 +528,7 @@ class AgentEngine {
 
         for name in candidateNames {
             guard let tool = tools.first(where: { $0.name == name }) else { continue }
-            if tool.parameters == "无" {
+            if tool.parameters == "なし" {
                 return (tool.name, [:])
             }
             if let arguments = heuristicArgumentsForTool(toolName: tool.name, userQuestion: userQuestion),
@@ -551,6 +558,7 @@ class AgentEngine {
         return tools.first
     }
 
+    // JSONオブジェクトを文字列からパース
     private func parseJSONObject(_ text: String) -> [String: Any]? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -591,11 +599,12 @@ class AgentEngine {
         return formatter.string(from: date)
     }
 
-    private func chineseNumberValue(_ token: String) -> Int? {
+    // 日本語数字を整数値に変換
+    private func japaneseNumberValue(_ token: String) -> Int? {
         if let value = Int(token) { return value }
 
         let digits: [Character: Int] = [
-            "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+            "零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4,
             "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
         ]
 
@@ -622,10 +631,11 @@ class AgentEngine {
         return nil
     }
 
-    private func parseBasicChineseDate(from text: String) -> Date? {
+    // テキストから日付を解析（漢字表記対応）
+    private func parseBasicJapaneseDate(from text: String) -> Date? {
         let patterns = [
-            "(今天|今日|今晚|今夜|明天|明晚|后天)(?:的)?(凌晨|早上|上午|中午|下午|晚上|傍晚)?([零〇一二两三四五六七八九十\\d]{1,3})点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?",
-            "(凌晨|早上|上午|中午|下午|晚上|傍晚)([零〇一二两三四五六七八九十\\d]{1,3})点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?"
+            "(今日|今夜|明日|明後日)(?:の)?(午前|午後|夜|朝|昼|夕方)?([零〇一二三四五六七八九十\\d]{1,3})時(?:(半)|([零〇一二三四五六七八九十\\d]{1,3})分?)?",
+            "(午前|午後|夜|朝|昼|夕方)([零〇一二三四五六七八九十\\d]{1,3})時(?:(半)|([零〇一二三四五六七八九十\\d]{1,3})分?)?"
         ]
 
         for pattern in patterns {
@@ -673,25 +683,23 @@ class AgentEngine {
             }
 
             guard let hourToken,
-                  var hour = chineseNumberValue(hourToken) else {
+                  var hour = japaneseNumberValue(hourToken) else {
                 continue
             }
 
             var minute = 0
             if hasHalf {
                 minute = 30
-            } else if let minuteToken, let parsedMinute = chineseNumberValue(minuteToken) {
+            } else if let minuteToken, let parsedMinute = japaneseNumberValue(minuteToken) {
                 minute = parsedMinute
             }
 
             if let periodToken {
                 switch periodToken {
-                case "下午", "晚上", "傍晚":
+                case "午後", "夜", "夕方":
                     if hour < 12 { hour += 12 }
-                case "中午":
+                case "昼":
                     if hour < 11 { hour += 12 }
-                case "凌晨":
-                    if hour == 12 { hour = 0 }
                 default:
                     break
                 }
@@ -699,9 +707,9 @@ class AgentEngine {
 
             var dayOffset = 0
             switch dayToken {
-            case "明天", "明晚":
+            case "明日":
                 dayOffset = 1
-            case "后天":
+            case "明後日":
                 dayOffset = 2
             default:
                 dayOffset = 0
@@ -732,9 +740,10 @@ class AgentEngine {
                 return date
             }
         }
-        return parseBasicChineseDate(from: text)
+        return parseBasicJapaneseDate(from: text)
     }
 
+    // ツール名からヒューリスティックに引数を推定
     private func heuristicArgumentsForTool(
         toolName: String,
         userQuestion: String
@@ -745,8 +754,8 @@ class AgentEngine {
         switch toolName {
         case "calculate-hash":
             let patterns = [
-                "(?:计算|求|生成|算一下|帮我算)(.+?)(?:的)?(?:哈希|hash)(?:值)?",
-                "(.+?)(?:的)?(?:哈希|hash)(?:值)?(?:是多少|是什么)?"
+                "(?:計算|求|生成|算出して)(.+?)(?:の)?(?:ハッシュ|hash)(?:値)?",
+                "(.+?)(?:の)?(?:ハッシュ|hash)(?:値)?(?:は何|はなに|は)?"
             ]
 
             var extracted: String?
@@ -757,7 +766,7 @@ class AgentEngine {
                    let capture = Range(match.range(at: 1), in: text) {
                     let value = String(text[capture])
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"' "))
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
                     if !value.isEmpty {
                         extracted = value
                         break
@@ -767,16 +776,13 @@ class AgentEngine {
 
             if extracted == nil {
                 let cleaned = text
-                    .replacingOccurrences(of: "帮我", with: "")
-                    .replacingOccurrences(of: "计算", with: "")
-                    .replacingOccurrences(of: "求", with: "")
-                    .replacingOccurrences(of: "生成", with: "")
-                    .replacingOccurrences(of: "算一下", with: "")
-                    .replacingOccurrences(of: "哈希值", with: "")
-                    .replacingOccurrences(of: "哈希", with: "")
+                    .replacingOccurrences(of: "ハッシュ値を計算", with: "")
+                    .replacingOccurrences(of: "ハッシュ値", with: "")
+                    .replacingOccurrences(of: "ハッシュを計算", with: "")
+                    .replacingOccurrences(of: "ハッシュ", with: "")
                     .replacingOccurrences(of: "hash", with: "", options: .caseInsensitive)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"' "))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
                 if !cleaned.isEmpty {
                     extracted = cleaned
                 }
@@ -787,8 +793,8 @@ class AgentEngine {
 
         case "text-reverse":
             let patterns = [
-                "(?:把|将)(.+?)(?:翻转|反转)(?:过来|一下)?",
-                "(?:翻转|反转)(.+?)(?:过来|一下)?$"
+                "(?:を|の)(.+?)(?:逆順|反転)(?:にして|して)?",
+                "(?:逆順|反転)(?:にして|して)?(.+?)$"
             ]
 
             var extracted: String?
@@ -799,7 +805,7 @@ class AgentEngine {
                    let capture = Range(match.range(at: 1), in: text) {
                     let value = String(text[capture])
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"' "))
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
                     if !value.isEmpty {
                         extracted = value
                         break
@@ -809,17 +815,12 @@ class AgentEngine {
 
             if extracted == nil {
                 let cleaned = text
-                    .replacingOccurrences(of: "帮我", with: "")
-                    .replacingOccurrences(of: "把", with: "")
-                    .replacingOccurrences(of: "将", with: "")
-                    .replacingOccurrences(of: "翻转过来", with: "")
-                    .replacingOccurrences(of: "反转过来", with: "")
-                    .replacingOccurrences(of: "翻转一下", with: "")
-                    .replacingOccurrences(of: "反转一下", with: "")
-                    .replacingOccurrences(of: "翻转", with: "")
-                    .replacingOccurrences(of: "反转", with: "")
+                    .replacingOccurrences(of: "逆順にして", with: "")
+                    .replacingOccurrences(of: "反転して", with: "")
+                    .replacingOccurrences(of: "逆順", with: "")
+                    .replacingOccurrences(of: "反転", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"' "))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
                 if !cleaned.isEmpty {
                     extracted = cleaned
                 }
@@ -830,8 +831,8 @@ class AgentEngine {
 
         case "clipboard-write":
             let patterns = [
-                "(?:复制|拷贝|写入)(.+?)(?:到|进|到系统)?(?:剪贴板)",
-                "(?:把|将)(.+?)(?:复制|拷贝|写入)(?:到|进)?(?:剪贴板)"
+                "(?:コピー|書き込む|貼り付ける)(.+?)(?:を|を)?(?:クリップボード)",
+                "(?:クリップボードに)(.+?)(?:をコピー|を書き込む)?"
             ]
 
             var extracted: String?
@@ -842,7 +843,7 @@ class AgentEngine {
                    let capture = Range(match.range(at: 1), in: text) {
                     let value = String(text[capture])
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"' "))
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
                     if !value.isEmpty {
                         extracted = value
                         break
@@ -852,20 +853,12 @@ class AgentEngine {
 
             if extracted == nil {
                 let cleaned = text
-                    .replacingOccurrences(of: "帮我", with: "")
-                    .replacingOccurrences(of: "把", with: "")
-                    .replacingOccurrences(of: "将", with: "")
-                    .replacingOccurrences(of: "复制到剪贴板", with: "")
-                    .replacingOccurrences(of: "拷贝到剪贴板", with: "")
-                    .replacingOccurrences(of: "写入剪贴板", with: "")
-                    .replacingOccurrences(of: "放到剪贴板", with: "")
-                    .replacingOccurrences(of: "存到剪贴板", with: "")
-                    .replacingOccurrences(of: "复制", with: "")
-                    .replacingOccurrences(of: "拷贝", with: "")
-                    .replacingOccurrences(of: "写入", with: "")
-                    .replacingOccurrences(of: "剪贴板", with: "")
+                    .replacingOccurrences(of: "クリップボードにコピー", with: "")
+                    .replacingOccurrences(of: "クリップボードに書き込む", with: "")
+                    .replacingOccurrences(of: "コピー", with: "")
+                    .replacingOccurrences(of: "クリップボード", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"' "))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
                 if !cleaned.isEmpty {
                     extracted = cleaned
                 }
@@ -875,13 +868,12 @@ class AgentEngine {
             return ["text": extracted]
 
         case "contacts-upsert":
-            let phone = text.firstMatch(of: /1[3-9]\d{9}/).map { String($0.0) }
+            let phone = text.firstMatch(of: /0[789]0-?\d{4}-?\d{4}|0\d{1,4}-?\d{2,4}-?\d{4}/).map { String($0.0) }
             var name: String?
 
             let patterns = [
-                "(?:把|将)?(.+?)(?:的)?(?:电话|手机号|号码|联系方式)\\s*(?:1[3-9]\\d{9})\\s*(?:添加到|加到|存到|保存到)?(?:联系人|通讯录)",
-                "(?:帮我)?(?:存(?:一下)?|保存|记一下)(.+?)(?:的)?(?:电话|手机号|号码|联系方式)",
-                "(?:联系人|通讯录)(?:里)?(?:添加|保存)?(.+?)(?:的)?(?:电话|手机号|号码|联系方式)"
+                "(?:を)?(.+?)(?:の)?(?:電話|携帯番号|番号|連絡先)\\s*(?:0[789]0-?\\d{4}-?\\d{4}|0\\d{1,4}-?\\d{2,4}-?\\d{4})\\s*(?:を)?(?:連絡先に|アドレス帳に)?(?:追加|保存)?",
+                "(?:を)?(?:保存|追加|登録|記録)(.+?)(?:の)?(?:電話|携帯番号|番号|連絡先)"
             ]
             for pattern in patterns {
                 guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
@@ -893,74 +885,17 @@ class AgentEngine {
                 }
             }
 
-            if name == nil,
-               let phone,
-               let phoneRange = text.range(of: phone) {
-                let prefix = text[..<phoneRange.lowerBound]
-                let cleaned = prefix
-                    .replacingOccurrences(of: "把", with: "")
-                    .replacingOccurrences(of: "将", with: "")
-                    .replacingOccurrences(of: "帮我", with: "")
-                    .replacingOccurrences(of: "存一下", with: "")
-                    .replacingOccurrences(of: "保存", with: "")
-                    .replacingOccurrences(of: "添加到联系人", with: "")
-                    .replacingOccurrences(of: "添加到通讯录", with: "")
-                    .replacingOccurrences(of: "加到联系人", with: "")
-                    .replacingOccurrences(of: "加到通讯录", with: "")
-                    .replacingOccurrences(of: "存到联系人", with: "")
-                    .replacingOccurrences(of: "存到通讯录", with: "")
-                    .replacingOccurrences(of: "联系人", with: "")
-                    .replacingOccurrences(of: "通讯录", with: "")
-                    .replacingOccurrences(of: "的电话", with: "")
-                    .replacingOccurrences(of: "电话", with: "")
-                    .replacingOccurrences(of: "手机号", with: "")
-                    .replacingOccurrences(of: "号码", with: "")
-                    .replacingOccurrences(of: "联系方式", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !cleaned.isEmpty {
-                    name = cleaned
-                }
-            }
-
-            var company: String?
-            if let regex = try? NSRegularExpression(pattern: "[，,]\\s*([^，。,]+?)(?:的)?\\s*$") {
-                let range = NSRange(text.startIndex..., in: text)
-                if let match = regex.firstMatch(in: text, range: range),
-                   let capture = Range(match.range(at: 1), in: text) {
-                    let value = String(text[capture]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !value.isEmpty, value != phone {
-                        company = value
-                    }
-                }
-            }
-
             guard let name, !name.isEmpty else { return nil }
             var result: [String: Any] = ["name": name]
             if let phone { result["phone"] = phone }
-            if let company, !company.isEmpty { result["company"] = company }
             return result
 
         case "contacts-search":
-            let phone = text.firstMatch(of: /1[3-9]\d{9}/).map { String($0.0) }
-            let email: String? = {
-                guard let regex = try? NSRegularExpression(
-                    pattern: "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
-                    options: [.caseInsensitive]
-                ) else {
-                    return nil
-                }
-                let range = NSRange(text.startIndex..., in: text)
-                guard let match = regex.firstMatch(in: text, range: range),
-                      let capture = Range(match.range, in: text) else {
-                    return nil
-                }
-                return String(text[capture])
-            }()
-
+            let phone = text.firstMatch(of: /0[789]0-?\d{4}-?\d{4}|0\d{1,4}-?\d{2,4}-?\d{4}/).map { String($0.0) }
             var name: String?
             let patterns = [
-                "(?:检查下?|查(?:一下|下)?|查询|看看)(?:联系人|通讯录)?(.+?)(?:的)?(?:电话|手机号|号码|联系方式|邮箱)",
-                "(?:联系人|通讯录)?(.+?)(?:的)?(?:电话|手机号|号码|联系方式|邮箱)(?:是)?(?:多少|是什么|有吗)?"
+                "(?:調べ|確認|検索|見て)(?:連絡先|アドレス帳)?(.+?)(?:の)?(?:電話|携帯番号|番号|連絡先|メール)",
+                "(?:連絡先|アドレス帳)?(.+?)(?:の)?(?:電話|携帯番号|番号|連絡先|メール)(?:は)?(?:何|は)?"
             ]
             for pattern in patterns {
                 guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
@@ -975,61 +910,17 @@ class AgentEngine {
                 }
             }
 
-            if name == nil {
-                let cleaned = text
-                    .replacingOccurrences(of: "帮我", with: "")
-                    .replacingOccurrences(of: "检查下", with: "")
-                    .replacingOccurrences(of: "检查", with: "")
-                    .replacingOccurrences(of: "查一下", with: "")
-                    .replacingOccurrences(of: "查下", with: "")
-                    .replacingOccurrences(of: "查询", with: "")
-                    .replacingOccurrences(of: "看看", with: "")
-                    .replacingOccurrences(of: "联系人", with: "")
-                    .replacingOccurrences(of: "通讯录", with: "")
-                    .replacingOccurrences(of: "的电话多少", with: "")
-                    .replacingOccurrences(of: "的电话", with: "")
-                    .replacingOccurrences(of: "电话多少", with: "")
-                    .replacingOccurrences(of: "电话", with: "")
-                    .replacingOccurrences(of: "手机号", with: "")
-                    .replacingOccurrences(of: "号码", with: "")
-                    .replacingOccurrences(of: "联系方式", with: "")
-                    .replacingOccurrences(of: "邮箱", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !cleaned.isEmpty {
-                    name = cleaned
-                }
-            }
-
             var result: [String: Any] = [:]
             if let name, !name.isEmpty { result["name"] = name }
             if let phone { result["phone"] = phone }
-            if let email { result["email"] = email }
-            if result.isEmpty {
-                result["query"] = text
-            }
+            if result.isEmpty { result["query"] = text }
             return result
 
         case "contacts-delete":
-            let phone = text.firstMatch(of: /1[3-9]\d{9}/).map { String($0.0) }
-            let email: String? = {
-                guard let regex = try? NSRegularExpression(
-                    pattern: "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
-                    options: [.caseInsensitive]
-                ) else {
-                    return nil
-                }
-                let range = NSRange(text.startIndex..., in: text)
-                guard let match = regex.firstMatch(in: text, range: range),
-                      let capture = Range(match.range, in: text) else {
-                    return nil
-                }
-                return String(text[capture])
-            }()
-
             var name: String?
             let patterns = [
-                "(?:把|将)(.+?)(?:的)?(?:电话|手机号|号码|联系方式)?(?:从)?(?:联系人|通讯录)?(?:里|中)?(?:删除|删掉|删了|删吗|删|移除|去掉)",
-                "(?:删除|删掉|删了|删吗|删|移除|去掉)(?:联系人|通讯录)?(?:里|中)?(.+)"
+                "(?:を)?(.+?)(?:の)?(?:電話|携帯番号|番号|連絡先)?(?:を)?(?:連絡先から|アドレス帳から)?(?:削除|消して|消す)",
+                "(?:削除|消して|消す)(?:連絡先|アドレス帳)?(.+)"
             ]
             for pattern in patterns {
                 guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
@@ -1044,71 +935,18 @@ class AgentEngine {
                 }
             }
 
-            if name == nil {
-                let cleaned = text
-                    .replacingOccurrences(of: "帮我", with: "")
-                    .replacingOccurrences(of: "把", with: "")
-                    .replacingOccurrences(of: "将", with: "")
-                    .replacingOccurrences(of: "从联系人中", with: "")
-                    .replacingOccurrences(of: "从联系人里", with: "")
-                    .replacingOccurrences(of: "从通讯录中", with: "")
-                    .replacingOccurrences(of: "从通讯录里", with: "")
-                    .replacingOccurrences(of: "联系人中", with: "")
-                    .replacingOccurrences(of: "联系人里", with: "")
-                    .replacingOccurrences(of: "通讯录中", with: "")
-                    .replacingOccurrences(of: "通讯录里", with: "")
-                    .replacingOccurrences(of: "联系人", with: "")
-                    .replacingOccurrences(of: "通讯录", with: "")
-                    .replacingOccurrences(of: "的电话", with: "")
-                    .replacingOccurrences(of: "电话", with: "")
-                    .replacingOccurrences(of: "手机号", with: "")
-                    .replacingOccurrences(of: "号码", with: "")
-                    .replacingOccurrences(of: "联系方式", with: "")
-                    .replacingOccurrences(of: "删除", with: "")
-                    .replacingOccurrences(of: "删掉", with: "")
-                    .replacingOccurrences(of: "删了吗", with: "")
-                    .replacingOccurrences(of: "删了", with: "")
-                    .replacingOccurrences(of: "删吗", with: "")
-                    .replacingOccurrences(of: "删", with: "")
-                    .replacingOccurrences(of: "移除", with: "")
-                    .replacingOccurrences(of: "去掉", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !cleaned.isEmpty {
-                    name = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "，。,？！!? "))
-                }
-            }
-
             var result: [String: Any] = [:]
             if let name, !name.isEmpty { result["name"] = name }
-            if let phone { result["phone"] = phone }
-            if let email { result["email"] = email }
-            if result.isEmpty {
-                result["query"] = text
-            }
+            if result.isEmpty { result["query"] = text }
             return result
 
         case "reminders-create":
             let due = detectDateInQuestion(text).map { iso8601StringForModel(from: $0) }
             var title = text
-                .replacingOccurrences(of: "帮我", with: "")
-                .replacingOccurrences(of: "提醒我", with: "")
-                .replacingOccurrences(of: "提醒", with: "")
+                .replacingOccurrences(of: "リマインドして", with: "")
+                .replacingOccurrences(of: "思い出させて", with: "")
+                .replacingOccurrences(of: "リマインダー", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let cleanupPatterns = [
-                "(今天|今日|今晚|今夜|明天|明晚|后天)(?:的)?(凌晨|早上|上午|中午|下午|晚上|傍晚)?[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?",
-                "(凌晨|早上|上午|中午|下午|晚上|傍晚)[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?"
-            ]
-            for pattern in cleanupPatterns {
-                if let regex = try? NSRegularExpression(pattern: pattern) {
-                    title = regex.stringByReplacingMatches(
-                        in: title,
-                        range: NSRange(title.startIndex..., in: title),
-                        withTemplate: ""
-                    )
-                }
-            }
-            title = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard !title.isEmpty else { return nil }
             var result: [String: Any] = ["title": title]
@@ -1117,28 +955,11 @@ class AgentEngine {
 
         case "calendar-create-event":
             let start = detectDateInQuestion(text).map { iso8601StringForModel(from: $0) }
-            var title = text
-                .replacingOccurrences(of: "帮我", with: "")
-                .replacingOccurrences(of: "安排", with: "")
-                .replacingOccurrences(of: "创建一个", with: "")
-                .replacingOccurrences(of: "创建", with: "")
-                .replacingOccurrences(of: "日历", with: "")
-                .replacingOccurrences(of: "事项", with: "")
+            let title = text
+                .replacingOccurrences(of: "カレンダーに追加", with: "")
+                .replacingOccurrences(of: "予定を作成", with: "")
+                .replacingOccurrences(of: "会議を作成", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let cleanupPatterns = [
-                "(今天|今日|今晚|今夜|明天|明晚|后天)(?:的)?(凌晨|早上|上午|中午|下午|晚上|傍晚)?[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?",
-                "(凌晨|早上|上午|中午|下午|晚上|傍晚)[零〇一二两三四五六七八九十\\d]{1,3}点(?:(半)|([零〇一二两三四五六七八九十\\d]{1,3})分?)?"
-            ]
-            for pattern in cleanupPatterns {
-                if let regex = try? NSRegularExpression(pattern: pattern) {
-                    title = regex.stringByReplacingMatches(
-                        in: title,
-                        range: NSRange(title.startIndex..., in: title),
-                        withTemplate: ""
-                    )
-                }
-            }
-            title = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard !title.isEmpty, let start else { return nil }
             return ["title": title, "start": start]
@@ -1174,6 +995,7 @@ class AgentEngine {
         }
     }
 
+    // クリップボード系ツールはモデルのフォローアップを省略
     private func shouldSkipToolFollowUpModel(for toolName: String) -> Bool {
         switch toolName {
         case "clipboard-read", "clipboard-write":
@@ -1183,6 +1005,7 @@ class AgentEngine {
         }
     }
 
+    // load_skill呼び出し前の事前解析（高速パス）
     private func preflightSkillLoadCall(for userQuestion: String) -> String? {
         let normalizedQuestion = userQuestion.lowercased()
 
@@ -1190,76 +1013,52 @@ class AgentEngine {
             normalizedQuestion.contains(keyword)
         }
 
-        if (has("哈希") || has("hash")),
+        if (has("ハッシュ") || has("hash")),
            let arguments = heuristicArgumentsForTool(toolName: "calculate-hash", userQuestion: userQuestion),
            validateSingleToolArguments(toolName: "calculate-hash", arguments: arguments) {
-            return syntheticToolCallText(
-                name: "calculate-hash",
-                arguments: arguments
-            )
+            return syntheticToolCallText(name: "calculate-hash", arguments: arguments)
         }
 
-        if (has("翻转") || has("反转")),
+        if (has("逆順") || has("反転")),
            let arguments = heuristicArgumentsForTool(toolName: "text-reverse", userQuestion: userQuestion),
            validateSingleToolArguments(toolName: "text-reverse", arguments: arguments) {
-            return syntheticToolCallText(
-                name: "text-reverse",
-                arguments: arguments
-            )
+            return syntheticToolCallText(name: "text-reverse", arguments: arguments)
         }
 
-        let mentionsClipboard = has("剪贴板") || has("clipboard")
+        let mentionsClipboard = has("クリップボード") || has("clipboard")
         if mentionsClipboard {
-            let readKeywords = ["读取", "读一下", "看看", "看下", "查看", "内容", "是什么"]
-            let writeKeywords = ["复制", "拷贝", "写入", "放到剪贴板", "存到剪贴板", "复制到剪贴板"]
+            let readKeywords = ["読む", "読み取る", "確認", "見て", "内容", "何が"]
+            let writeKeywords = ["コピー", "書き込む", "クリップボードに"]
 
             if writeKeywords.contains(where: has),
                let arguments = heuristicArgumentsForTool(toolName: "clipboard-write", userQuestion: userQuestion),
                validateSingleToolArguments(toolName: "clipboard-write", arguments: arguments) {
-                return syntheticToolCallText(
-                    name: "clipboard-write",
-                    arguments: arguments
-                )
+                return syntheticToolCallText(name: "clipboard-write", arguments: arguments)
             }
 
             if readKeywords.contains(where: has) || mentionsClipboard {
-                return syntheticToolCallText(
-                    name: "load_skill",
-                    arguments: ["skill": "clipboard"]
-                )
+                return syntheticToolCallText(name: "load_skill", arguments: ["skill": "clipboard"])
             }
         }
 
         let calendarIntent =
-            (has("日历") || has("日程") || has("会议") || has("约会"))
-            && ["安排", "创建", "新建", "加入", "加到", "记到", "写进", "写入"].contains(where: has)
+            (has("カレンダー") || has("予定") || has("会議") || has("約束"))
+            && ["作成", "追加", "新規", "入れる", "登録", "書き込む"].contains(where: has)
         if calendarIntent {
             if let arguments = heuristicArgumentsForTool(toolName: "calendar-create-event", userQuestion: userQuestion),
                validateSingleToolArguments(toolName: "calendar-create-event", arguments: arguments) {
-                return syntheticToolCallText(
-                    name: "calendar-create-event",
-                    arguments: arguments
-                )
+                return syntheticToolCallText(name: "calendar-create-event", arguments: arguments)
             }
-            return syntheticToolCallText(
-                name: "load_skill",
-                arguments: ["skill": "calendar"]
-            )
+            return syntheticToolCallText(name: "load_skill", arguments: ["skill": "calendar"])
         }
 
-        let reminderIntent = ["提醒我", "提醒", "记得", "待办", "提醒事项"].contains(where: has)
+        let reminderIntent = ["リマインドして", "思い出させて", "リマインダー", "ToDoに追加"].contains(where: has)
         if reminderIntent {
             if let arguments = heuristicArgumentsForTool(toolName: "reminders-create", userQuestion: userQuestion),
                validateSingleToolArguments(toolName: "reminders-create", arguments: arguments) {
-                return syntheticToolCallText(
-                    name: "reminders-create",
-                    arguments: arguments
-                )
+                return syntheticToolCallText(name: "reminders-create", arguments: arguments)
             }
-            return syntheticToolCallText(
-                name: "load_skill",
-                arguments: ["skill": "reminders"]
-            )
+            return syntheticToolCallText(name: "load_skill", arguments: ["skill": "reminders"])
         }
 
         return nil
@@ -1279,7 +1078,7 @@ class AgentEngine {
         }
 
         let tools = registeredTools(for: skillId)
-            .filter { $0.parameters != "无" }
+            .filter { $0.parameters != "なし" }
         guard !tools.isEmpty else {
             return .failed
         }
@@ -1287,7 +1086,7 @@ class AgentEngine {
         if tools.count == 1, let tool = tools.first {
             if let heuristic = heuristicArgumentsForTool(toolName: tool.name, userQuestion: userQuestion),
                validateSingleToolArguments(toolName: tool.name, arguments: heuristic) {
-                log("[Agent] load_skill heuristic 直接执行工具: \(tool.name)")
+                log("[Agent] load_skill ヒューリスティックで直接ツール実行: \(tool.name)")
                 return .toolCall(name: tool.name, arguments: heuristic)
             }
 
@@ -1318,7 +1117,7 @@ class AgentEngine {
         }
 
         let allowedToolsSummary = tools.map {
-            "- \($0.name): \($0.description)\n  参数: \($0.parameters)"
+            "- \($0.name): \($0.description)\n  パラメータ: \($0.parameters)"
         }.joined(separator: "\n")
 
         let extractionPrompt = PromptBuilder.buildSkillToolSelectionPrompt(
@@ -1357,6 +1156,7 @@ class AgentEngine {
         return .failed
     }
 
+    // 指定表示名のスキルカードを「完了」状態に更新
     private func markSkillsDone(_ displayNames: [String]) {
         guard !displayNames.isEmpty else { return }
         for index in messages.indices {
@@ -1370,6 +1170,7 @@ class AgentEngine {
         }
     }
 
+    // 中間JSON出力らしい文字列かどうかを判定
     private func looksLikeStructuredIntermediateOutput(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -1396,8 +1197,7 @@ class AgentEngine {
             "result_for_user_name\":",
             "text_for_display\":",
             "tool_operation_success\":",
-            "arguments_for_tool_no_skill\":",
-            "memory_user_power_conversion\":"
+            "arguments_for_tool_no_skill\":"
         ]
         if suspiciousFragments.filter({ trimmed.contains($0) }).count >= 2 {
             return true
@@ -1423,6 +1223,7 @@ class AgentEngine {
         return false
     }
 
+    // プロンプトのエコーらしい文字列かどうかを判定
     private func looksLikePromptEcho(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -1432,9 +1233,9 @@ class AgentEngine {
         }
 
         let suspiciousPhrases = [
-            "根据已加载的 Skill",
-            "不要将任何关于工具、系统或该请求的描述变成 Markdown 代码或 JSON 模板",
-            "如果需要，请直接调用",
+            "読み込み済みのSkillに基づいて",
+            "ツール、システム、リクエストに関する説明をMarkdownコードやJSONテンプレートにしない",
+            "必要に応じて直接呼び出して",
             "package_name",
             "text_for_user"
         ]
@@ -1445,6 +1246,7 @@ class AgentEngine {
         return hitCount >= 2
     }
 
+    // ツール呼び出しテキストを生成
     private func syntheticToolCallText(
         name: String,
         arguments: [String: Any]
@@ -1470,19 +1272,20 @@ class AgentEngine {
         return payload
     }
 
+    // ツール結果をモデル向けの要約テキストに変換
     private func toolResultSummaryForModel(
         toolName: String,
         toolResult: String
     ) -> String {
         let trimmed = toolResult.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "工具 \(toolName) 已执行，但没有返回内容。" }
+        guard !trimmed.isEmpty else { return "ツール \(toolName) を実行しましたが、結果が返されませんでした。" }
 
         if let payload = parsedToolPayload(from: trimmed) {
             if let success = payload["success"] as? Bool,
                !success,
                let error = payload["error"] as? String,
                !error.isEmpty {
-                return "工具 \(toolName) 执行失败：\(error)"
+                return "ツール \(toolName) の実行に失敗しました：\(error)"
             }
 
             if let result = payload["result"] as? String {
@@ -1506,16 +1309,17 @@ class AgentEngine {
         }
 
         if trimmed.isEmpty {
-            return "工具 \(toolName) 已执行，但没有返回内容。"
+            return "ツール \(toolName) を実行しましたが、結果が返されませんでした。"
         }
 
         return """
-        工具 \(toolName) 已执行完成，但模型没有生成最终回答。
-        工具返回结果：
+        ツール \(toolName) の実行が完了しましたが、最終回答が生成されませんでした。
+        ツールの返り値：
         \(trimmed)
         """
     }
 
+    // ツール結果をローカルでレンダリング（モデル呼び出し不要な場合）
     private func renderToolResultLocally(
         toolName: String,
         toolResult: String
@@ -1548,117 +1352,92 @@ class AgentEngine {
         switch toolName {
         case "device-info":
             var lines: [String] = []
-            if let name = string("name") {
-                lines.append("设备名称：\(name)")
-            }
+            if let name = string("name") { lines.append("デバイス名：\(name)") }
             if let localizedModel = string("localized_model") ?? string("model") {
-                lines.append("设备类型：\(localizedModel)")
+                lines.append("デバイスタイプ：\(localizedModel)")
             }
-            if let systemName = string("system_name"),
-               let systemVersion = string("system_version") {
-                lines.append("系统版本：\(systemName) \(systemVersion)")
-            } else if let systemVersion = string("system_version") {
-                lines.append("系统版本：\(systemVersion)")
+            if let systemName = string("system_name"), let systemVersion = string("system_version") {
+                lines.append("システムバージョン：\(systemName) \(systemVersion)")
             }
             if let memoryGB = double("memory_gb") {
-                lines.append(String(format: "物理内存：%.1f GB", memoryGB))
+                lines.append(String(format: "物理メモリ：%.1f GB", memoryGB))
             }
             if let processorCount = int("processor_count") {
-                lines.append("处理器核心数：\(processorCount)")
+                lines.append("プロセッサコア数：\(processorCount)")
             }
             return lines.isEmpty ? nil : lines.joined(separator: "\n")
 
         case "device-name":
-            if let name = string("name") {
-                return "这台设备的名称是 \(name)。"
-            }
+            if let name = string("name") { return "このデバイスの名前は \(name) です。" }
 
         case "device-model":
             if let localizedModel = string("localized_model") ?? string("model") {
-                return "这台设备的官方设备类型是 \(localizedModel)。"
+                return "このデバイスの公式タイプは \(localizedModel) です。"
             }
 
         case "device-system-version":
-            if let systemName = string("system_name"),
-               let systemVersion = string("system_version") {
-                return "当前系统版本是 \(systemName) \(systemVersion)。"
+            if let systemName = string("system_name"), let systemVersion = string("system_version") {
+                return "現在のシステムバージョンは \(systemName) \(systemVersion) です。"
             }
 
         case "device-memory":
             if let memoryGB = double("memory_gb") {
-                return String(format: "这台设备的物理内存约为 %.1f GB。", memoryGB)
+                return String(format: "このデバイスの物理メモリは約 %.1f GB です。", memoryGB)
             }
 
         case "device-processor-count":
             if let processorCount = int("processor_count") {
-                return "这台设备的处理器核心数是 \(processorCount)。"
+                return "このデバイスのプロセッサコア数は \(processorCount) です。"
             }
 
         case "device-identifier-for-vendor":
             if let identifier = string("identifier_for_vendor") {
-                return "当前 App 在这台设备上的 identifierForVendor 是 \(identifier)。"
+                return "このデバイスの identifierForVendor は \(identifier) です。"
             }
 
         case "clipboard-read":
-            if let content = string("content") {
-                return "剪贴板当前内容是：\(content)"
-            }
+            if let content = string("content") { return "クリップボードの内容：\(content)" }
 
         case "clipboard-write":
             if let copiedLength = int("copied_length") {
-                return "已写入剪贴板，共 \(copiedLength) 个字符。"
+                return "クリップボードに \(copiedLength) 文字を書き込みました。"
             }
 
         case "text-reverse":
-            if let reversed = string("reversed") {
-                return "翻转结果：\(reversed)"
-            }
+            if let reversed = string("reversed") { return "反転結果：\(reversed)" }
 
         case "calculate-hash":
-            if let hash = payload["hash"] {
-                return "哈希值是 \(hash)。"
-            }
+            if let hash = payload["hash"] { return "ハッシュ値：\(hash)" }
 
         case "calendar-create-event":
-            if let title = string("title"),
-               let start = string("start") {
-                var parts = ["已创建日历事项“\(title)”", "开始时间是 \(start)"]
-                if let location = string("location") {
-                    parts.append("地点是 \(location)")
-                }
-                return parts.joined(separator: "，") + "。"
+            if let title = string("title"), let start = string("start") {
+                var parts = ["カレンダーに「\(title)」を作成しました", "開始時刻：\(start)"]
+                if let location = string("location") { parts.append("場所：\(location)") }
+                return parts.joined(separator: "、") + "。"
             }
 
         case "reminders-create":
             if let title = string("title") {
                 if let due = string("due") {
-                    return "已创建提醒事项“\(title)”，提醒时间是 \(due)。"
+                    return "リマインダー「\(title)」を作成しました。リマインド時刻：\(due)。"
                 }
-                return "已创建提醒事项“\(title)”。"
+                return "リマインダー「\(title)」を作成しました。"
             }
 
         case "contacts-upsert":
             if let name = string("name") {
-                let action = string("action") == "updated" ? "已更新" : "已创建"
-                var parts = ["\(action)联系人“\(name)”"]
-                if let phone = string("phone") {
-                    parts.append("手机号是 \(phone)")
-                }
-                if let company = string("company") {
-                    parts.append("公司是 \(company)")
-                }
-                return parts.joined(separator: "，") + "。"
+                let action = string("action") == "updated" ? "更新" : "作成"
+                var parts = ["連絡先「\(name)」を\(action)しました"]
+                if let phone = string("phone") { parts.append("電話番号：\(phone)") }
+                if let company = string("company") { parts.append("会社：\(company)") }
+                return parts.joined(separator: "、") + "。"
             }
 
         case "contacts-search":
-            if let result = string("result") {
-                return result
-            }
+            if let result = string("result") { return result }
 
         case "contacts-delete":
-            if let result = string("result") {
-                return result
-            }
+            if let result = string("result") { return result }
 
         default:
             break
@@ -1668,7 +1447,7 @@ class AgentEngine {
     }
 
     private func fallbackReplyForEmptySkillFollowUp(skillName: String) -> String {
-        "Skill \(skillName) 已加载，但模型没有继续生成工具调用或最终回答。请重试，或把问题说得更具体一些。"
+        "Skill「\(skillName)」を読み込みましたが、モデルがツール呼び出しや最終回答を生成しませんでした。もう一度試すか、質問を具体的に言い換えてください。"
     }
 
     private func shouldUseToolingPrompt(for userQuestion: String) -> Bool {
@@ -1676,26 +1455,23 @@ class AgentEngine {
         guard !normalizedQuestion.isEmpty else { return false }
 
         let domainKeywords = [
-            "日历", "提醒", "提醒事项", "通讯录", "联系人", "剪贴板",
-            "设备", "系统", "相册", "照片", "蓝牙", "wifi", "电量",
-            "亮度", "音量", "电话", "短信", "邮件"
+            "カレンダー", "リマインダー", "リマインド", "連絡先", "アドレス帳", "クリップボード",
+            "デバイス", "システム", "写真", "bluetooth", "wifi", "バッテリー",
+            "明るさ", "音量", "電話", "メール"
         ]
         let actionKeywords = [
-            "打开", "查看", "读取", "搜索", "查询", "创建",
-            "新建", "添加", "保存", "修改", "删除", "复制",
-            "拨打", "发送", "设置", "调高", "调低"
+            "開く", "確認", "読む", "検索", "調べる", "作成",
+            "追加", "保存", "変更", "削除", "コピー",
+            "発信", "送る", "設定", "上げる", "下げる"
         ]
 
         let mentionsDomain = domainKeywords.contains { normalizedQuestion.contains($0) }
         let mentionsAction = actionKeywords.contains { normalizedQuestion.contains($0) }
-        if mentionsDomain && mentionsAction {
-            return true
-        }
+        if mentionsDomain && mentionsAction { return true }
 
         for entry in skillEntries where entry.isEnabled {
             if normalizedQuestion.contains(entry.id.lowercased())
-                || normalizedQuestion.contains(entry.name.lowercased())
-            {
+                || normalizedQuestion.contains(entry.name.lowercased()) {
                 return true
             }
 
@@ -1707,8 +1483,7 @@ class AgentEngine {
                definition.metadata.triggers.contains(where: { trigger in
                    let normalizedTrigger = trigger.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
                    return !normalizedTrigger.isEmpty && normalizedQuestion.contains(normalizedTrigger)
-               })
-            {
+               }) {
                 return true
             }
         }
@@ -1716,23 +1491,23 @@ class AgentEngine {
         return mentionsDomain
     }
 
-    // MARK: - 初始化
+    // MARK: - 初期化
 
-    /// ConfigurationsView 的"Restore default"按钮使用。
+    /// ConfigurationsView の「デフォルトに戻す」ボタンが使用する
     var defaultSystemPrompt: String { kDefaultSystemPrompt }
 
     func setup() {
         applyModelSelection()
         llm.refreshModelInstallStates()
-        loadSystemPrompt()       // 从 SYSPROMPT.md 注入 system prompt
+        loadSystemPrompt()       // SYSPROMPT.md からシステムプロンプトを注入
         applySamplingConfig()
         llm.loadModel()
     }
 
     // MARK: - SYSPROMPT 注入
 
-    /// 从 ApplicationSupport/PhoneClaw/SYSPROMPT.md 读取 system prompt。
-    /// 文件不存在时自动写入 kDefaultSystemPrompt（供用户后续编辑）。
+    /// ApplicationSupport/PhoneClaw/SYSPROMPT.md からシステムプロンプトを読み込む。
+    /// ファイルが存在しない場合は kDefaultSystemPrompt を自動書き込みする（ユーザーが後で編集できる）。
     func loadSystemPrompt() {
         let fm = FileManager.default
         guard let supportDir = fm.urls(for: .applicationSupportDirectory,
@@ -1748,11 +1523,11 @@ class AgentEngine {
            let content = try? String(contentsOf: file, encoding: .utf8),
            !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             config.systemPrompt = content
-            print("[Agent] SYSPROMPT loaded (\(content.count) chars)")
+            print("[Agent] SYSPROMPT 読み込み完了 (\(content.count) 文字)")
         } else {
             try? kDefaultSystemPrompt.write(to: file, atomically: true, encoding: .utf8)
             config.systemPrompt = kDefaultSystemPrompt
-            print("[Agent] SYSPROMPT not found — default written to \(file.path)")
+            print("[Agent] SYSPROMPT が見つかりません — デフォルトを書き込みました: \(file.path)")
         }
     }
 
@@ -1795,12 +1570,12 @@ class AgentEngine {
         do {
             _ = try await toolRegistry.requestAccess(for: kind)
         } catch {
-            log("[Permission] \(kind.rawValue) request failed: \(error.localizedDescription)")
+            log("[権限] \(kind.rawValue) のリクエストに失敗: \(error.localizedDescription)")
         }
         return toolRegistry.authorizationStatus(for: kind)
     }
 
-    // MARK: - 处理用户输入（MLX 流式输出）
+    // MARK: - ユーザー入力処理（MLXストリーム出力）
 
     func processInput(
         _ text: String,
@@ -1814,9 +1589,9 @@ class AgentEngine {
         let audioAttachment = audio.map(UserInput.Audio.from(snapshot:))
         let normalizedText: String
         if trimmed.isEmpty, !images.isEmpty {
-            normalizedText = "请描述这张图片。"
+            normalizedText = "この画像を説明してください。"
         } else if trimmed.isEmpty, audio != nil {
-            normalizedText = "请直接转写这段音频内容。"
+            normalizedText = "この音声の内容を文字起こしして説明してください。"
         } else {
             normalizedText = trimmed
         }
@@ -1878,13 +1653,13 @@ class AgentEngine {
                 guard let self = self else { return }
                 switch result {
                 case .success(let fullText):
-                    log("[Agent] 1st raw: \(fullText.prefix(300))")
+                    log("[Agent] 1回目RAW: \(fullText.prefix(300))")
                     let cleaned = self.cleanOutput(fullText)
                     self.messages[msgIndex].update(
-                        content: cleaned.isEmpty ? "（无回复）" : cleaned
+                        content: cleaned.isEmpty ? "（回答なし）" : cleaned
                     )
                 case .failure(let error):
-                    log("[Agent] multimodal failed: \(error.localizedDescription)")
+                    log("[Agent] マルチモーダル失敗: \(error.localizedDescription)")
                     self.messages[msgIndex].update(role: .system, content: "❌ \(error.localizedDescription)")
                 }
                 self.isProcessing = false
@@ -1912,10 +1687,10 @@ class AgentEngine {
                 historyDepth: historyDepth
             )
         }
-        log("[Agent] text prompt mode=\(shouldUseFullAgentPrompt ? "agent" : "light"), chars=\(prompt.count), skills=\(activeSkillInfos.count)")
+        log("[Agent] テキストプロンプトモード=\(shouldUseFullAgentPrompt ? "agent" : "light"), 文字数=\(prompt.count), スキル数=\(activeSkillInfos.count)")
 
         if let preflightToolCall {
-            log("[Agent] preflight tool path triggered")
+            log("[Agent] プリフライトツールパス起動")
             if messages.indices.contains(msgIndex),
                messages[msgIndex].role == .assistant,
                messages[msgIndex].content == "▍" {
@@ -1966,7 +1741,7 @@ class AgentEngine {
             guard let self = self else { return }
             switch result {
             case .success(let fullText):
-                log("[Agent] 1st raw: \(fullText.prefix(300))")
+                log("[Agent] 1回目RAW: \(fullText.prefix(300))")
 
                 if self.parseToolCall(fullText) != nil {
                     self.messages[msgIndex].update(content: "")
@@ -1982,7 +1757,7 @@ class AgentEngine {
                 } else {
                     let cleaned = self.cleanOutput(fullText)
                     self.messages[msgIndex].update(
-                        content: cleaned.isEmpty ? "（无回复）" : cleaned
+                        content: cleaned.isEmpty ? "（回答なし）" : cleaned
                     )
                 }
             case .failure(let error):
@@ -1992,7 +1767,7 @@ class AgentEngine {
         }
     }
 
-    // MARK: - Skill 结果后的后续推理（支持多轮工具链）
+    // MARK: - スキル結果後の後続推論（複数ラウンドのツールチェーン対応）
 
     private func streamLLM(prompt: String, images: [CIImage]) async -> String? {
         return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
@@ -2000,10 +1775,10 @@ class AgentEngine {
             } onComplete: { result in
                 switch result {
                 case .success(let text):
-                    log("[Agent] LLM raw: \(text.prefix(300))")
+                    log("[Agent] LLM RAW: \(text.prefix(300))")
                     continuation.resume(returning: text)
                 case .failure(let error):
-                    log("[Agent] LLM failed: \(error.localizedDescription)")
+                    log("[Agent] LLM 失敗: \(error.localizedDescription)")
                     continuation.resume(returning: nil)
                 }
             }
@@ -2046,7 +1821,7 @@ class AgentEngine {
                 }
                 switch result {
                 case .success(let text):
-                    log("[Agent] LLM raw: \(text.prefix(300))")
+                    log("[Agent] LLM RAW: \(text.prefix(300))")
                     continuation.resume(returning: text)
                 case .failure(let error):
                     self.messages[msgIndex].update(role: .system, content: "❌ \(error.localizedDescription)")
@@ -2065,7 +1840,7 @@ class AgentEngine {
         maxRounds: Int = 10
     ) async {
         guard round <= maxRounds else {
-            log("[Agent] 达到最大工具链轮数 \(maxRounds)")
+            log("[Agent] ツールチェーンの最大ラウンド数 \(maxRounds) に達しました")
             isProcessing = false
             return
         }
@@ -2073,7 +1848,7 @@ class AgentEngine {
         guard let parsedCall = parseToolCall(fullText) else {
             let cleaned = cleanOutput(fullText)
             if let lastAssistant = messages.lastIndex(where: { $0.role == .assistant }) {
-                messages[lastAssistant].update(content: cleaned.isEmpty ? "（无回复）" : cleaned)
+                messages[lastAssistant].update(content: cleaned.isEmpty ? "（回答なし）" : cleaned)
             }
             isProcessing = false
             return
@@ -2084,7 +1859,7 @@ class AgentEngine {
             arguments: parsedCall.arguments
         )
 
-        log("[Agent] Round \(round): tool_call name=\(call.name)")
+        log("[Agent] ラウンド \(round): tool_call name=\(call.name)")
 
         // ── load_skill ──
         if call.name == "load_skill" {
@@ -2125,7 +1900,7 @@ class AgentEngine {
 
             if let autoCall = autoToolCallForLoadedSkills(skillIds: loadedSkillIds)
                 ?? inferFallbackToolCall(skillIds: loadedSkillIds, userQuestion: userQuestion) {
-                log("[Agent] load_skill 直接执行工具: \(autoCall.name)")
+                log("[Agent] load_skill 直接ツール実行: \(autoCall.name)")
                 let syntheticToolCall = syntheticToolCallText(
                     name: autoCall.name,
                     arguments: autoCall.arguments
@@ -2150,7 +1925,7 @@ class AgentEngine {
             )
             switch singleToolExtraction {
             case .toolCall(let name, let arguments):
-                log("[Agent] load_skill 参数提取后执行工具: \(name)")
+                log("[Agent] load_skill 引数抽出後ツール実行: \(name)")
                 let syntheticToolCall = syntheticToolCallText(name: name, arguments: arguments)
                 await executeToolChain(
                     prompt: prompt,
@@ -2188,7 +1963,7 @@ class AgentEngine {
             }
 
             if parseToolCall(nextText) != nil {
-                log("[Agent] load_skill 后检测到 tool 调用 (round \(round + 1))")
+                log("[Agent] load_skill 後にツール呼び出しを検出 (ラウンド \(round + 1))")
                 messages[followUpIndex].update(content: "")
                 await executeToolChain(
                     prompt: followUpPrompt, fullText: nextText,
@@ -2213,7 +1988,7 @@ class AgentEngine {
                     }
 
                     if parseToolCall(retryText) != nil {
-                        log("[Agent] load_skill 重试后检测到 tool 调用 (round \(round + 1))")
+                        log("[Agent] load_skill リトライ後にツール呼び出しを検出 (ラウンド \(round + 1))")
                         messages[followUpIndex].update(content: "")
                         await executeToolChain(
                             prompt: retryPrompt,
@@ -2225,9 +2000,9 @@ class AgentEngine {
                         )
                     } else {
                         let retryCleaned = cleanOutput(retryText)
-                        let loadedSkillName = loadedDisplayNames.joined(separator: ", ").isEmpty
-                            ? "已加载的能力"
-                            : loadedDisplayNames.joined(separator: ", ")
+                        let loadedSkillName = loadedDisplayNames.joined(separator: "、").isEmpty
+                            ? "読み込み済み能力"
+                            : loadedDisplayNames.joined(separator: "、")
                         let finalReply = retryCleaned.isEmpty
                             || looksLikeStructuredIntermediateOutput(retryCleaned)
                             || looksLikePromptEcho(retryCleaned)
@@ -2246,7 +2021,7 @@ class AgentEngine {
             return
         }
 
-        // ── 具体 Tool 调用 ──
+        // ── 具体的なツール呼び出し ──
 
         let ownerSkillId = findSkillId(for: call.name)
         let displayName = findDisplayName(for: call.name)
@@ -2264,7 +2039,7 @@ class AgentEngine {
 
         guard ownerSkillId != nil else {
             messages[cardIndex].update(role: .system, content: "done", skillName: displayName)
-            messages.append(ChatMessage(role: .assistant, content: "⚠️ 未知工具: \(call.name)"))
+            messages.append(ChatMessage(role: .assistant, content: "⚠️ 不明なツール: \(call.name)"))
             isProcessing = false
             return
         }
@@ -2272,7 +2047,7 @@ class AgentEngine {
         let enabledIds = Set(skillEntries.filter(\.isEnabled).map(\.id))
         guard enabledIds.contains(ownerSkillId!) else {
             messages[cardIndex].update(role: .system, content: "done", skillName: displayName)
-            messages.append(ChatMessage(role: .assistant, content: "⚠️ Skill \(displayName) 未启用"))
+            messages.append(ChatMessage(role: .assistant, content: "⚠️ Skill「\(displayName)」は無効です"))
             isProcessing = false
             return
         }
@@ -2284,7 +2059,7 @@ class AgentEngine {
             let toolResultSummary = toolResultSummaryForModel(toolName: call.name, toolResult: toolResult)
             messages[cardIndex].update(role: .system, content: "done", skillName: displayName)
             messages.append(ChatMessage(role: .skillResult, content: toolResultSummary, skillName: call.name))
-            log("[Agent] Tool \(call.name) round \(round) done")
+            log("[Agent] ツール \(call.name) ラウンド \(round) 完了")
 
             if shouldSkipToolFollowUpModel(for: call.name) {
                 messages.append(ChatMessage(role: .assistant, content: toolResultSummary))
@@ -2309,7 +2084,7 @@ class AgentEngine {
             }
 
             if !parseAllToolCalls(nextText).isEmpty {
-                log("[Agent] 检测到第 \(round + 1) 轮工具调用")
+                log("[Agent] 第 \(round + 1) ラウンドのツール呼び出しを検出")
                 messages[followUpIndex].update(content: "")
                 await executeToolChain(
                     prompt: followUpPrompt, fullText: nextText,
@@ -2331,12 +2106,12 @@ class AgentEngine {
             }
         } catch {
             messages[cardIndex].update(role: .system, content: "done", skillName: displayName)
-            messages.append(ChatMessage(role: .system, content: "❌ Tool 执行失败: \(error)"))
+            messages.append(ChatMessage(role: .system, content: "❌ ツール実行失敗: \(error)"))
             isProcessing = false
         }
     }
 
-    // MARK: - 工具
+    // MARK: - ユーティリティ
 
     func clearMessages() {
         messages.removeAll()
@@ -2349,10 +2124,10 @@ class AgentEngine {
 
         if let lastAssistant = messages.lastIndex(where: { $0.role == .assistant }) {
             let content = messages[lastAssistant].content.replacingOccurrences(of: "▍", with: "")
-            messages[lastAssistant].update(content: content.isEmpty ? "（已中断）" : content)
+            messages[lastAssistant].update(content: content.isEmpty ? "（中断されました）" : content)
         }
 
-        log("[Agent] Generation cancelled because the app left foreground")
+        log("[Agent] アプリがフォアグラウンドから離れたため生成をキャンセルしました")
     }
 
     private func promptImages(
@@ -2410,6 +2185,7 @@ class AgentEngine {
         return String(text[nameRange])
     }
 
+    // ストリーミング中の出力クリーニング
     private func cleanOutputStreaming(_ text: String) -> String {
         var result = preserveThinkingChannels(in: text)
 
@@ -2449,6 +2225,7 @@ class AgentEngine {
         return normalizeSafetyTruncation(in: result)
     }
 
+    // 最終出力のクリーニング
     private func cleanOutput(_ text: String) -> String {
         var result = preserveThinkingChannels(in: text)
 
@@ -2496,6 +2273,7 @@ class AgentEngine {
         return normalizeSafetyTruncation(in: result)
     }
 
+    // 安全切り捨て警告を正規化
     private func normalizeSafetyTruncation(in text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let warningRange = trimmed.range(of: "> ⚠️ ") else {
@@ -2514,6 +2292,7 @@ class AgentEngine {
         return normalizedBody + "\n\n" + warning
     }
 
+    // 不完全な末尾ブロックをトリム
     private func trimIncompleteTrailingBlock(in text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
@@ -2549,6 +2328,7 @@ class AgentEngine {
         return nil
     }
 
+    // 思考チャンネルのトークンをカスタムマーカーに変換して保持
     private func preserveThinkingChannels(in text: String) -> String {
         let openTokens = ["<|channel|>thought\n", "<|channel>thought\n"]
         let closeToken = "<channel|>"

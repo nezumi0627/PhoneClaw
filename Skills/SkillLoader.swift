@@ -1,14 +1,14 @@
 import Foundation
 import Yams
 
-// MARK: - SKILL.md 解析器 + 加载器
+// MARK: - SKILL.md パーサー + ローダー
 //
-// 参考 Vera 项目的 skill_loader.py，实现 Swift 版。
-// 渐进式加载：
-//   1. 启动时：只加载 YAML frontmatter（元数据）
-//   2. load_skill 时：加载完整 body（指令体）
+// Vera プロジェクトの skill_loader.py を参考にした Swift 版実装。
+// 段階的ロード：
+//   1. 起動時：YAML フロントマター（メタデータ）のみロード
+//   2. load_skill 呼び出し時：完全な本文（指示体）をロード
 
-// MARK: - 数据模型
+// MARK: - データモデル
 
 struct SkillExample {
     let query: String
@@ -16,9 +16,9 @@ struct SkillExample {
 }
 
 struct SkillMetadata {
-    let id: String              // 目录名 "clipboard"
-    let name: String            // 默认英文名 / 回退显示名
-    let localizedNameZh: String?
+    let id: String              // ディレクトリ名（例: "clipboard"）
+    let name: String            // デフォルト英語名 / フォールバック表示名
+    let localizedNameJa: String? // 日本語ローカライズ名
     let description: String
     let version: String
     let icon: String
@@ -28,10 +28,11 @@ struct SkillMetadata {
     let examples: [SkillExample]
 
     var displayName: String {
-        if Locale.preferredLanguages.contains(where: { $0.lowercased().hasPrefix("zh") }),
-           let localizedNameZh,
-           !localizedNameZh.isEmpty {
-            return localizedNameZh
+        // 日本語環境では日本語名を優先
+        if Locale.preferredLanguages.contains(where: { $0.lowercased().hasPrefix("ja") }),
+           let localizedNameJa,
+           !localizedNameJa.isEmpty {
+            return localizedNameJa
         }
         return name
     }
@@ -41,18 +42,19 @@ struct SkillDefinition: Identifiable {
     let id: String
     let filePath: URL
     let metadata: SkillMetadata
-    var body: String?           // Markdown body（懒加载）
+    var body: String?           // Markdown 本文（遅延ロード）
     var isEnabled: Bool
 
-    /// 完整的 SKILL.md 原始内容
+    /// SKILL.md の生の内容
     var rawContent: String? {
         try? String(contentsOf: filePath, encoding: .utf8)
     }
 }
 
-// MARK: - Skill Loader
+// MARK: - Skill ローダー
 
 class SkillLoader {
+    // スキルエイリアス（旧名 → 正規名）
     private static let skillAliases: [String: String] = [
         "contacts_delete": "contacts",
         "contacts-delete": "contacts"
@@ -67,9 +69,9 @@ class SkillLoader {
         ensureDefaultSkills()
     }
 
-    // MARK: - 公开接口
+    // MARK: - 公開インターフェース
 
-    /// 发现并加载所有 Skill 的元数据
+    /// 全スキルのメタデータを発見・ロード
     func discoverSkills() -> [SkillDefinition] {
         cache.removeAll()
         guard let items = try? FileManager.default.contentsOfDirectory(
@@ -88,9 +90,9 @@ class SkillLoader {
             guard FileManager.default.fileExists(atPath: skillFile.path) else { continue }
 
             let skillId = item.lastPathComponent
-            if Self.skillAliases[skillId] != nil {
-                continue
-            }
+            // エイリアスディレクトリはスキップ
+            if Self.skillAliases[skillId] != nil { continue }
+
             if let def = loadDefinition(skillId: skillId, file: skillFile) {
                 cache[skillId] = def
                 results.append(def)
@@ -99,7 +101,7 @@ class SkillLoader {
         return results
     }
 
-    /// 完整加载 Skill（包括 body）— load_skill 时调用
+    /// スキルの本文を完全ロード（load_skill 呼び出し時）
     func loadBody(skillId: String) -> String? {
         let resolvedSkillId = canonicalSkillId(for: skillId)
         if let cached = cache[resolvedSkillId], cached.body != nil {
@@ -115,22 +117,22 @@ class SkillLoader {
         return body
     }
 
-    /// 保存 SKILL.md（编辑后写回）
+    /// SKILL.md を保存（編集後に書き戻す）
     func saveSkill(skillId: String, content: String) throws {
         let skillFile = skillsDirectory
             .appendingPathComponent(skillId, isDirectory: true)
             .appendingPathComponent("SKILL.md")
         try content.write(to: skillFile, atomically: true, encoding: .utf8)
-        // 清缓存，下次重新解析
+        // キャッシュをクリアして次回再解析を強制
         cache.removeValue(forKey: skillId)
     }
 
-    /// 重新加载所有（热更新入口）
+    /// 全スキルを再ロード（ホットリロードのエントリポイント）
     func reloadAll() -> [SkillDefinition] {
         return discoverSkills()
     }
 
-    /// 根据工具名反查 Skill ID
+    /// ツール名からスキルIDを逆引き
     func findSkillId(forTool toolName: String) -> String? {
         for (id, def) in cache {
             if def.metadata.allowedTools.contains(toolName) {
@@ -140,12 +142,12 @@ class SkillLoader {
         return nil
     }
 
-    /// 获取缓存的 SkillDefinition
+    /// キャッシュされた SkillDefinition を取得
     func getDefinition(_ skillId: String) -> SkillDefinition? {
         cache[canonicalSkillId(for: skillId)]
     }
 
-    /// 更新启用状态
+    /// 有効/無効状態を更新
     func setEnabled(_ skillId: String, enabled: Bool) {
         cache[canonicalSkillId(for: skillId)]?.isEnabled = enabled
     }
@@ -163,7 +165,7 @@ class SkillLoader {
         let metadata = SkillMetadata(
             id: skillId,
             name: frontmatter["name"] as? String ?? skillId,
-            localizedNameZh: frontmatter["name-zh"] as? String,
+            localizedNameJa: frontmatter["name-ja"] as? String,
             description: frontmatter["description"] as? String ?? "",
             version: frontmatter["version"] as? String ?? "1.0.0",
             icon: frontmatter["icon"] as? String ?? "wrench",
@@ -177,13 +179,13 @@ class SkillLoader {
             id: skillId,
             filePath: file,
             metadata: metadata,
-            body: nil, // 懒加载
+            body: nil, // 遅延ロード
             isEnabled: !metadata.disabled
         )
     }
 
     private func parseFrontmatter(_ content: String) -> [String: Any]? {
-        // 匹配 --- ... --- 包裹的 YAML
+        // --- ... --- で囲まれた YAML をマッチング
         guard let regex = try? NSRegularExpression(
             pattern: "^---\\s*\\n(.*?)\\n---\\s*\\n",
             options: .dotMatchesLineSeparators
@@ -194,7 +196,7 @@ class SkillLoader {
               let yamlRange = Range(match.range(at: 1), in: content) else { return nil }
 
         let yamlString = String(content[yamlRange])
-        // 用 Yams 解析
+        // Yams で YAML を解析
         guard let parsed = try? Yams.load(yaml: yamlString) as? [String: Any] else { return nil }
         return parsed
     }
@@ -222,7 +224,7 @@ class SkillLoader {
         }
     }
 
-    // MARK: - 首次启动：写入默认 Skill
+    // MARK: - 初回起動時：デフォルトスキルを書き込む
 
     private func ensureDefaultSkills() {
         let fm = FileManager.default
@@ -241,22 +243,22 @@ class SkillLoader {
         }
     }
 
-    // MARK: - 内置默认 SKILL.md
+    // MARK: - 組み込みデフォルト SKILL.md
 
     static let defaultSkills: [(String, String)] = [
         ("clipboard", """
         ---
         name: Clipboard
-        name-zh: 剪贴板
-        description: '读写系统剪贴板内容。当用户需要读取、复制或操作剪贴板时使用。'
+        name-ja: クリップボード
+        description: 'システムクリップボードの読み書きを行います。ユーザーがクリップボードの読み取り、コピー、操作を必要とする場合に使用します。'
         version: "1.0.0"
         icon: doc.on.clipboard
         disabled: false
 
         triggers:
-          - 剪贴板
-          - 粘贴
-          - 复制
+          - クリップボード
+          - コピー
+          - 貼り付け
           - clipboard
 
         allowed-tools:
@@ -264,48 +266,48 @@ class SkillLoader {
           - clipboard-write
 
         examples:
-          - query: "读取我的剪贴板内容"
-            scenario: "读取剪贴板"
-          - query: "把这段文字复制到剪贴板"
-            scenario: "写入剪贴板"
+          - query: "クリップボードの内容を読んで"
+            scenario: "クリップボードを読む"
+          - query: "このテキストをクリップボードにコピーして"
+            scenario: "クリップボードに書き込む"
         ---
 
-        # 剪贴板操作
+        # クリップボード操作
 
-        你负责帮助用户读写系统剪贴板。
+        ユーザーのシステムクリップボードの読み書きをサポートします。
 
-        ## 可用工具
+        ## 利用可能なツール
 
-        - **clipboard-read**: 读取剪贴板当前内容（无参数）
-        - **clipboard-write**: 将文本写入剪贴板（参数: text — 要复制的文本）
+        - **clipboard-read**: クリップボードの現在の内容を読み取る（パラメータなし）
+        - **clipboard-write**: テキストをクリップボードに書き込む（パラメータ: text — コピーするテキスト）
 
-        ## 执行流程
+        ## 実行フロー
 
-        1. 用户要求读取 → 调用 `clipboard-read`
-        2. 用户要求复制/写入 → 调用 `clipboard-write`，传入 text 参数
-        3. 根据工具返回结果，简洁回答用户
+        1. 読み取りを求められた場合 → `clipboard-read` を呼び出す
+        2. コピー/書き込みを求められた場合 → `clipboard-write` を呼び出し、text パラメータを渡す
+        3. ツールの返り値に基づいて簡潔に回答する
 
-        ## 调用格式
+        ## 呼び出し形式
 
         <tool_call>
-        {"name": "工具名", "arguments": {}}
+        {"name": "ツール名", "arguments": {}}
         </tool_call>
         """),
 
         ("device", """
         ---
         name: Device
-        name-zh: 设备
-        description: '使用 iOS 官方公开 API 查询当前设备名称、设备类型、系统版本、内存和处理器数量。'
+        name-ja: デバイス
+        description: 'iOS 公式公開 API を使用して現在のデバイス名、タイプ、システムバージョン、メモリ、プロセッサ数を照会します。'
         version: "1.0.0"
         icon: desktopcomputer
         disabled: false
 
         triggers:
-          - 设备
-          - 系统信息
-          - 当前设备
-          - 本机
+          - デバイス
+          - システム情報
+          - 現在のデバイス
+          - 本体
 
         allowed-tools:
           - device-info
@@ -317,43 +319,39 @@ class SkillLoader {
           - device-identifier-for-vendor
 
         examples:
-          - query: "这台手机的设备信息是什么"
-            scenario: "查看官方设备信息汇总"
-          - query: "系统版本是多少"
-            scenario: "查看系统版本"
-          - query: "这台设备叫什么名字"
-            scenario: "查看设备名称"
-          - query: "内存多大"
-            scenario: "查看物理内存"
-          - query: "处理器核心数是多少"
-            scenario: "查看处理器数量"
+          - query: "このデバイスの情報を教えて"
+            scenario: "デバイス情報の概要を表示"
+          - query: "システムバージョンは何"
+            scenario: "システムバージョンを確認"
+          - query: "このデバイスの名前は"
+            scenario: "デバイス名を確認"
+          - query: "メモリはどのくらい"
+            scenario: "物理メモリを確認"
+          - query: "プロセッサのコア数は"
+            scenario: "プロセッサ数を確認"
         ---
 
-        # 设备信息查询
+        # デバイス情報照会
 
-        你负责帮助用户查看当前这台设备的系统与硬件基础信息。
+        現在のデバイスのシステム・ハードウェアの基本情報を確認するサポートをします。
 
-        ## 可用工具
+        ## 利用可能なツール
 
-        - **device-info**: 汇总查询当前设备名称、设备类型、系统版本、物理内存、处理器数量
-        - **device-name**: 查询当前设备名称
-        - **device-model**: 查询当前设备类型（官方 `UIDevice.model` / `localizedModel`）
-        - **device-system-version**: 查询系统名称和系统版本
-        - **device-memory**: 查询物理内存大小
-        - **device-processor-count**: 查询处理器核心数
-        - **device-identifier-for-vendor**: 查询当前 App 的 `identifierForVendor`
+        - **device-info**: 現在のデバイス名、タイプ、システムバージョン、物理メモリ、プロセッサ数を一括取得
+        - **device-name**: デバイス名を取得
+        - **device-model**: デバイスタイプを取得（公式 `UIDevice.model` / `localizedModel`）
+        - **device-system-version**: システム名とバージョンを取得
+        - **device-memory**: 物理メモリサイズを取得
+        - **device-processor-count**: プロセッサコア数を取得
+        - **device-identifier-for-vendor**: 現在の App の `identifierForVendor` を取得
 
-        ## 执行流程
+        ## 実行フロー
 
-        1. 只有当用户明确询问当前设备、本机、手机、系统版本、内存、处理器等信息时，才调用这些工具
-        2. 如果用户只是泛泛提到“配置”或“信息”，但没有明确在问当前设备，不要调用这个工具
-        3. 能用单个专用工具回答时，优先使用最小 sufficient 的那个工具；只有用户想要整体参数时，才调用 `device-info`
-        4. 工具返回后，直接把 JSON 转成用户友好的中文描述
-        5. 这些工具只使用 iOS 官方公开 API，不要自行映射成具体营销机型名
-        6. 如果用户问“手机型号”，要如实说明官方 API 只能返回通用设备类型，例如 `iPhone`
-        7. 如果工具结果已经足够，直接回答，不要反问用户“你指的是什么配置”
+        1. ユーザーが現在のデバイス、本体、システムバージョン、メモリ、プロセッサなどを明確に質問した場合のみツールを呼び出す
+        2. 最小限の専用ツールで回答できる場合はそれを優先し、全体的な情報が必要な場合のみ `device-info` を使用
+        3. ツール結果をユーザーフレンドリーな日本語で提供する
 
-        ## 调用格式
+        ## 呼び出し形式
 
         <tool_call>
         {"name": "device-info", "arguments": {}}
@@ -363,170 +361,168 @@ class SkillLoader {
         ("text", """
         ---
         name: Text
-        name-zh: 文本
-        description: '文本处理工具：哈希计算、翻转等。当用户需要对文本进行处理或转换时使用。'
+        name-ja: テキスト
+        description: 'テキスト処理ツール：ハッシュ計算、反転など。ユーザーがテキストを処理・変換する必要がある場合に使用します。'
         version: "1.0.0"
         icon: textformat
         disabled: false
 
         triggers:
-          - 哈希
+          - ハッシュ
           - hash
-          - 翻转
-          - 反转
-          - 文本处理
+          - 反転
+          - 逆順
+          - テキスト処理
 
         allowed-tools:
           - calculate-hash
           - text-reverse
 
         examples:
-          - query: "计算 Hello World 的哈希值"
-            scenario: "哈希计算"
-          - query: "把这段文字翻转过来"
-            scenario: "文本翻转"
+          - query: "Hello World のハッシュ値を計算して"
+            scenario: "ハッシュ計算"
+          - query: "このテキストを反転して"
+            scenario: "テキスト反転"
         ---
 
-        # 文本处理
+        # テキスト処理
 
-        你负责帮助用户进行文本处理操作。
+        テキスト処理操作をサポートします。
 
-        ## 可用工具
+        ## 利用可能なツール
 
-        - **calculate-hash**: 计算文本的哈希值（参数: text — 要计算哈希的文本）
-        - **text-reverse**: 翻转文本（参数: text — 要翻转的文本）
+        - **calculate-hash**: テキストのハッシュ値を計算（パラメータ: text — ハッシュを計算するテキスト）
+        - **text-reverse**: テキストを反転（パラメータ: text — 反転するテキスト）
 
-        ## 执行流程
+        ## 実行フロー
 
-        1. 判断用户需要哪种文本操作
-        2. 调用对应工具，传入 text 参数
-        3. 返回处理结果
+        1. ユーザーが必要とするテキスト操作を判断
+        2. 対応するツールを呼び出し、text パラメータを渡す
+        3. 処理結果を返す
 
-        ## 调用格式
+        ## 呼び出し形式
 
         <tool_call>
-        {"name": "工具名", "arguments": {"text": "要处理的文本"}}
+        {"name": "ツール名", "arguments": {"text": "処理するテキスト"}}
         </tool_call>
         """),
 
         ("calendar", """
         ---
         name: Calendar
-        name-zh: 日历
-        description: '创建新的日历事项。当用户需要安排日程、会议、约会或写入日历时使用。'
+        name-ja: カレンダー
+        description: '新しいカレンダーイベントを作成します。ユーザーがスケジュール、会議、約束、カレンダーへの書き込みを必要とする場合に使用します。'
         version: "1.0.0"
         icon: calendar
         disabled: false
 
         triggers:
-          - 日历
-          - 日程
-          - 会议
-          - 约会
-          - 安排
+          - カレンダー
+          - 予定
+          - 会議
+          - 約束
+          - スケジュール
 
         allowed-tools:
           - calendar-create-event
 
         examples:
-          - query: "帮我创建一个明天下午两点的会议"
-            scenario: "新建日历事项"
+          - query: "明日の午後2時に会議を作成して"
+            scenario: "カレンダーイベントを新規作成"
         ---
 
-        # 日历事项创建
+        # カレンダーイベント作成
 
-        你负责帮助用户创建新的日历事项。
+        新しいカレンダーイベントの作成をサポートします。
 
-        ## 可用工具
+        ## 利用可能なツール
 
-        - **calendar-create-event**: 创建日历事项
-          - `title`: 必填，事项标题
-          - `start`: 必填，ISO 8601 开始时间，例如 `2026-04-07T14:00:00`
-          - `end`: 可选，ISO 8601 结束时间；不传时默认开始后一小时
-          - `location`: 可选，地点
-          - `notes`: 可选，备注
+        - **calendar-create-event**: カレンダーイベントを作成
+          - `title`: 必須、イベントタイトル
+          - `start`: 必須、ISO 8601 開始時刻（例: `2026-04-07T14:00:00`）
+          - `end`: 任意、ISO 8601 終了時刻（省略時は開始の1時間後）
+          - `location`: 任意、場所
+          - `notes`: 任意、メモ
 
-        ## 执行流程
+        ## 実行フロー
 
-        1. 只有当用户明确要新建/安排日历事项时才调用工具
-        2. 由你从用户话语中提取参数，工具层不做自然语言解析
-        3. 传给工具前，必须把时间整理成 ISO 8601 字符串
-        4. 如果缺少 `title` 或 `start`，先简短追问，不要猜测
-        5. 工具成功后，直接告诉用户已创建什么事项和时间
+        1. ユーザーが明確にカレンダーイベントの新規作成/スケジュール設定を求めた場合のみツールを呼び出す
+        2. ユーザーの発言からパラメータを抽出し、時刻は ISO 8601 文字列に変換する
+        3. `title` または `start` が欠けている場合は簡潔に追加質問する
+        4. ツール成功後、作成したイベントと時刻をユーザーに伝える
 
-        ## 调用格式
+        ## 呼び出し形式
 
         <tool_call>
-        {"name": "calendar-create-event", "arguments": {"title": "会议", "start": "2026-04-07T14:00:00"}}
+        {"name": "calendar-create-event", "arguments": {"title": "会議", "start": "2026-04-07T14:00:00"}}
         </tool_call>
         """),
 
         ("reminders", """
         ---
         name: Reminders
-        name-zh: 提醒事项
-        description: '创建新的提醒事项。当用户需要记得做某事、设置待办或提醒时使用。'
+        name-ja: リマインダー
+        description: '新しいリマインダーを作成します。ユーザーが何かを覚えておく必要がある場合、ToDo の設定やリマインドが必要な場合に使用します。'
         version: "1.0.0"
         icon: bell
         disabled: false
 
         triggers:
-          - 提醒
-          - 待办
-          - 记得
-          - 提示
+          - リマインド
+          - リマインダー
+          - ToDo
+          - 覚えておいて
+          - 思い出させて
 
         allowed-tools:
           - reminders-create
 
         examples:
-          - query: "提醒我今晚八点发文件"
-            scenario: "新建提醒事项"
+          - query: "今夜8時にファイルを送るのをリマインドして"
+            scenario: "リマインダーを新規作成"
         ---
 
-        # 提醒事项创建
+        # リマインダー作成
 
-        你负责帮助用户创建新的提醒事项。
+        新しいリマインダーの作成をサポートします。
 
-        ## 可用工具
+        ## 利用可能なツール
 
-        - **reminders-create**: 创建提醒事项
-          - `title`: 必填，提醒标题
-          - `due`: 可选，ISO 8601 提醒时间，例如 `2026-04-07T20:00:00`
-          - `notes`: 可选，备注
+        - **reminders-create**: リマインダーを作成
+          - `title`: 必須、リマインダータイトル
+          - `due`: 任意、ISO 8601 リマインド時刻（例: `2026-04-07T20:00:00`）
+          - `notes`: 任意、メモ
 
-        ## 执行流程
+        ## 実行フロー
 
-        1. 只有当用户明确要设置提醒或待办时才调用工具
-        2. 由你提取标题、时间、备注
-        3. 如果有时间，必须转换成 ISO 8601 字符串
-        4. 如果缺少 `title`，先简短追问
-        5. 工具成功后，直接告诉用户提醒已创建
+        1. ユーザーが明確にリマインダーや ToDo の設定を求めた場合のみツールを呼び出す
+        2. タイトル、時刻、メモを抽出し、時刻がある場合は ISO 8601 文字列に変換する
+        3. `title` が欠けている場合は簡潔に追加質問する
+        4. ツール成功後、リマインダーが作成されたことをユーザーに伝える
 
-        ## 调用格式
+        ## 呼び出し形式
 
         <tool_call>
-        {"name": "reminders-create", "arguments": {"title": "发文件", "due": "2026-04-07T20:00:00"}}
+        {"name": "reminders-create", "arguments": {"title": "ファイルを送る", "due": "2026-04-07T20:00:00"}}
         </tool_call>
         """),
 
         ("contacts", """
         ---
         name: Contacts
-        name-zh: 通讯录
-        description: '查询、创建、更新或删除联系人。当用户要查电话、看联系方式、存号码、补充联系人信息或删除联系人时使用。'
+        name-ja: 連絡先
+        description: '連絡先の照会、作成、更新、削除を行います。ユーザーが電話番号の確認、連絡先の保存、情報の補足、連絡先の削除を必要とする場合に使用します。'
         version: "1.1.0"
         icon: person.crop.circle
         disabled: false
 
         triggers:
-          - 联系人
-          - 通讯录
-          - 查电话
-          - 联系电话
-          - 存号码
-          - 联系方式
-          - 删除联系人
+          - 連絡先
+          - アドレス帳
+          - 電話番号を調べる
+          - 番号を保存
+          - 連絡方法
+          - 連絡先を削除
 
         allowed-tools:
           - contacts-search
@@ -534,62 +530,61 @@ class SkillLoader {
           - contacts-delete
 
         examples:
-          - query: "把王总电话 13812345678 添加到联系人"
-            scenario: "新建或更新联系人"
-          - query: "检查下联系人张晓霞的电话多少"
-            scenario: "查询联系人电话"
-          - query: "把王总从联系人中删除"
-            scenario: "删除联系人"
+          - query: "田中さんの電話番号 090-1234-5678 を連絡先に追加して"
+            scenario: "連絡先を新規作成または更新"
+          - query: "山田花子さんの電話番号を調べて"
+            scenario: "連絡先の電話番号を照会"
+          - query: "田中さんを連絡先から削除して"
+            scenario: "連絡先を削除"
         ---
 
-        # 联系人查询与维护
+        # 連絡先の照会・管理
 
-        你负责帮助用户查询、创建、更新或删除通讯录联系人。
+        アドレス帳の連絡先の照会、作成、更新、削除をサポートします。
 
-        ## 可用工具
+        ## 利用可能なツール
 
-        - **contacts-search**: 查询联系人
-          - `query`: 关键词，可用于模糊搜索
-          - `name`: 联系人姓名
-          - `phone`: 手机号
-          - `email`: 邮箱
-          - `identifier`: 联系人标识
-        - **contacts-upsert**: 创建或更新联系人
-          - `name`: 必填，联系人姓名
-          - `phone`: 可选，手机号；如果提供，会优先按手机号查重
-          - `company`: 可选，公司
-          - `email`: 可选，邮箱
-          - `notes`: 可选，备注
-        - **contacts-delete**: 删除联系人
-          - `query`: 关键词，可用于模糊搜索
-          - `name`: 联系人姓名
-          - `phone`: 手机号
-          - `email`: 邮箱
-          - `identifier`: 联系人标识
+        - **contacts-search**: 連絡先を検索
+          - `query`: キーワード（あいまい検索可）
+          - `name`: 連絡先の名前
+          - `phone`: 電話番号
+          - `email`: メールアドレス
+          - `identifier`: 連絡先の識別子
+        - **contacts-upsert**: 連絡先を作成または更新
+          - `name`: 必須、連絡先の名前
+          - `phone`: 任意、電話番号（提供された場合、電話番号で重複チェック）
+          - `company`: 任意、会社名
+          - `email`: 任意、メールアドレス
+          - `notes`: 任意、メモ
+        - **contacts-delete**: 連絡先を削除
+          - `query`: キーワード（あいまい検索可）
+          - `name`: 連絡先の名前
+          - `phone`: 電話番号
+          - `email`: メールアドレス
+          - `identifier`: 連絡先の識別子
 
-        ## 执行流程
+        ## 実行フロー
 
-        1. 如果用户在查询电话、邮箱、联系方式，优先调用 `contacts-search`
-        2. 如果用户在删除、移除、删掉联系人，调用 `contacts-delete`
-        3. 如果用户在保存、添加或更新联系人，调用 `contacts-upsert`
-        4. 查询或删除时优先提取 `name`，提取不到再用 `query`
-        5. 保存或更新时提取姓名、手机号、公司、邮箱、备注
-        6. 如果缺少保存联系人所需的 `name`，先简短追问
-        7. 删除时如果匹配到多个联系人，不要猜测，应提示用户说得更具体
-        8. 工具成功后，直接用中文给出简洁结果
+        1. 電話番号やメール確認 → `contacts-search`
+        2. 削除 → `contacts-delete`
+        3. 保存・追加・更新 → `contacts-upsert`
+        4. `name` を優先して抽出し、取得できない場合は `query` を使用
+        5. 保存に必要な `name` が欠けている場合は簡潔に追加質問する
+        6. 削除時に複数マッチした場合は推測せず、より具体的な情報を求める
+        7. ツール成功後、簡潔な日本語で結果を伝える
 
-        ## 调用格式
+        ## 呼び出し形式
 
         <tool_call>
-        {"name": "contacts-search", "arguments": {"name": "张晓霞"}}
+        {"name": "contacts-search", "arguments": {"name": "山田花子"}}
         </tool_call>
 
         <tool_call>
-        {"name": "contacts-upsert", "arguments": {"name": "王总", "phone": "13812345678", "company": "字节"}}
+        {"name": "contacts-upsert", "arguments": {"name": "田中", "phone": "090-1234-5678", "company": "○○株式会社"}}
         </tool_call>
 
         <tool_call>
-        {"name": "contacts-delete", "arguments": {"name": "王总"}}
+        {"name": "contacts-delete", "arguments": {"name": "田中"}}
         </tool_call>
         """),
     ]

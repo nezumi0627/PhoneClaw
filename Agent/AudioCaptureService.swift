@@ -64,13 +64,13 @@ final class AudioCaptureService {
         if permissionStatus == .notDetermined {
             let granted = await requestPermission()
             guard granted else {
-                lastErrorMessage = "麦克风权限未授予，无法开始录音。"
+                lastErrorMessage = "マイクの権限が付与されていないため、録音を開始できません。"
                 return false
             }
         }
 
         guard permissionStatus.isGranted else {
-            lastErrorMessage = "麦克风权限不可用，请到系统设置中开启。"
+            lastErrorMessage = "マイクの権限が利用できません。設定アプリから許可してください。"
             return false
         }
 
@@ -78,7 +78,7 @@ final class AudioCaptureService {
 
         resetCaptureState()
         lastErrorMessage = nil
-        statusText = "准备录音..."
+        statusText = "録音の準備中..."
 
         do {
             try audioSession.setCategory(
@@ -107,7 +107,7 @@ final class AudioCaptureService {
             return true
         } catch {
             stopCapture(deactivateSession: false)
-            lastErrorMessage = "启动录音失败：\(error.localizedDescription)"
+            lastErrorMessage = "録音の開始に失敗しました：\(error.localizedDescription)"
             statusText = lastErrorMessage ?? ""
             return false
         }
@@ -127,7 +127,7 @@ final class AudioCaptureService {
 
         if let snapshot, snapshot.duration > 0 {
             statusText = String(
-                format: "已录制 %.1f 秒音频（%.0f Hz，%d 声道），可以直接发送给模型。",
+                format: "%.1f 秒の音声を録音しました（%.0f Hz、%d チャンネル）。モデルに送信できます。",
                 snapshot.duration,
                 snapshot.sampleRate,
                 snapshot.channelCount
@@ -198,6 +198,7 @@ final class AudioCaptureService {
         if formatChannelCount <= 1 {
             samples = Array(UnsafeBufferPointer(start: channelData[0], count: frameCount))
         } else {
+            // 複数チャンネルをモノラルにミックスダウン
             var mixed = Array(repeating: Float.zero, count: frameCount)
             let scale = 1.0 / Float(formatChannelCount)
             for channel in 0 ..< formatChannelCount {
@@ -213,6 +214,7 @@ final class AudioCaptureService {
 
         pcmLock.lock()
         rollingPCM.append(contentsOf: samples)
+        // ローリングバッファの最大サイズを制限
         let maxStoredSamples = Int(max(sampleRate, Self.preferredSampleRate) * Self.maxStoredSeconds)
         if rollingPCM.count > maxStoredSamples {
             rollingPCM.removeFirst(rollingPCM.count - maxStoredSamples)
@@ -241,7 +243,7 @@ final class AudioCaptureService {
     private func updateStatusText() {
         guard isCapturing else { return }
         statusText = String(
-            format: "录音中 %.1f 秒 · %.0f Hz · 缓冲 %.1f 秒 PCM",
+            format: "録音中 %.1f 秒 · %.0f Hz · バッファ %.1f 秒 PCM",
             duration,
             max(sampleRate, Self.preferredSampleRate),
             sampleRate > 0 ? Double(bufferedSampleCount) / sampleRate : 0
