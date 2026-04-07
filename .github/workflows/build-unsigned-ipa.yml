@@ -146,6 +146,7 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Build archive (unsigned)
         run: |
+          set -o pipefail
           xcodebuild archive \
             -workspace PhoneClaw.xcworkspace \
             -scheme PhoneClaw \
@@ -165,6 +166,10 @@ jobs:
       - name: Package IPA
         run: |
           APP_PATH=$(find $RUNNER_TEMP/PhoneClaw.xcarchive/Products -name "*.app" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ .app not found. Archive step likely failed."
+            exit 1
+          fi
           mkdir -p $RUNNER_TEMP/Payload
           cp -R "$APP_PATH" $RUNNER_TEMP/Payload/
           cd $RUNNER_TEMP

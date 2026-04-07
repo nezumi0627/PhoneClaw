@@ -196,7 +196,7 @@ final class PromptPresetStore {
     }
 
     func deletePreset(id: UUID) {
-        deletePresets(ids: [id])
+        deletePresets(ids: Set([id]))
     }
 
     func deletePresets(ids: Set<UUID>) {
